@@ -2,11 +2,23 @@
 
 以黑白猫素材制作的 macOS 桌宠：透明背景、原木桌面、键盘气泡、鼠标爪和眼动跟随。
 
-<p align="center">
-  <img src="assets/custom-cat-demo.gif" width="360" alt="黑白猫桌宠互动演示">
-</p>
-
 基于 [chanke17/KuroCat](https://github.com/chanke17/KuroCat) 修改，保留原项目的 MIT 许可证。本仓库的定制改动集中在 macOS；Windows 和 Linux 源码保留上游实现，界面与动作不完全相同。[上游使用说明](README.upstream.md)。
+
+## 全部动作展示
+
+| 桌面互动：键盘气泡、鼠标爪与眼动 | 桌边招呼 |
+| :---: | :---: |
+| <img src="assets/custom-cat-demo.gif" width="320" alt="键盘气泡、鼠标爪与眼动跟随"> | <img src="assets/actions/wave.gif" width="320" alt="桌边招呼动态预览"> |
+
+| 桌垫小睡 | 窗沿发呆 |
+| :---: | :---: |
+| <img src="assets/actions/nap.gif" width="320" alt="桌垫小睡动态预览"> | <img src="assets/actions/observe.gif" width="320" alt="窗沿发呆动态预览"> |
+
+| 露肚抱爪 | 抬腿洗脸 |
+| :---: | :---: |
+| <img src="assets/actions/belly.gif" width="320" alt="露肚抱爪动态预览"> | <img src="assets/actions/groom.gif" width="320" alt="抬腿洗脸动态预览"> |
+
+五个专属动作可从右键菜单的“专属动作”中选择。新按键或鼠标点击会恢复桌面互动。
 
 ## 功能
 
@@ -51,6 +63,12 @@ bash scripts/check-ui.sh
 ~~~
 
 check-ui.sh 会临时显示测试窗口和原生菜单，用于核对菜单命中、窗口位置、尺寸与多屏行为。请在本地桌面会话中运行。
+
+使用当前素材重新导出专属动作动图：
+
+~~~sh
+bash scripts/render-actions.sh
+~~~
 
 ## 目录
 
