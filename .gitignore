@@ -26,3 +26,6 @@ assets/ui-interaction-v*/
 # Local-only input probing prototypes
 scripts/live-input-test.swift
 tests/live-ui/
+
+# Reviewed local animation prototypes and render diagnostics
+assets/idle-actions-v*/

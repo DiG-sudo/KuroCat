@@ -23,8 +23,8 @@ let previews: [(CustomCatAction, String, String)] = [
     (.groom, "groom", "groom_leg")
 ]
 
-func advance(_ cat: CatPhysics, at t: Double) {
-    cat.step(dt: 1.0 / 60, windowFrameInScreen: frame, scripted: ScriptedFrameInput(
+func advance(_ cat: CatPhysics, at t: Double, dt: Double = 1.0 / 60) {
+    cat.step(dt: CGFloat(dt), windowFrameInScreen: frame, scripted: ScriptedFrameInput(
         now: epoch + t, activeKeys: [], orderedKeys: [],
         mouseScreenPos: CGPoint(x: 180 + 280 * sin(t * 1.4), y: 220 + 140 * cos(t * 1.4)),
         mouseVelocity: .zero, leftMouseDown: false, rightMouseDown: false,
@@ -49,18 +49,18 @@ for (action, filename, expectedPose) in previews {
     precondition(cat.customDisplayedPose == expectedPose && cat.customPoseOpacity > 0.99)
     let destination = CGImageDestinationCreateWithURL(
         output.appendingPathComponent(filename + ".gif") as CFURL,
-        UTType.gif.identifier as CFString, 60, nil)!
+        UTType.gif.identifier as CFString, 150, nil)!
     CGImageDestinationSetProperties(destination, [
         kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]
     ] as CFDictionary)
-    for n in 0..<60 {
-        for step in 0..<3 { advance(cat, at: 1 + Double(n * 3 + step) / 60) }
+    for n in 0..<150 {
+        for step in 0..<3 { advance(cat, at: 1 + Double(n * 3 + step) / 75, dt: 1.0 / 75) }
         precondition(cat.customDisplayedPose == expectedPose)
         let image = render(cat)
         CGImageDestinationAddImage(destination, image, [
-            kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 0.05]
+            kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 0.04]
         ] as CFDictionary)
     }
     precondition(CGImageDestinationFinalize(destination))
-    print("Rendered \(filename): \(expectedPose), 60 frames")
+    print("Rendered \(filename): \(expectedPose), 150 frames, 6 seconds")
 }

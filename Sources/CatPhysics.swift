@@ -254,6 +254,7 @@ final class CatPhysics {
     // One complete illustrated pose is visible at a time. Never dissolve two anatomies together.
     private(set) var customDisplayedPose = "sit_base"
     private(set) var customPoseOpacity: CGFloat = 1
+    private(set) var customPoseAge: CGFloat = 0
     private var customDuration: CGFloat = 0
     private var nextCustomIdleTime: CGFloat = 20
     private var customIdleIndex = 0
@@ -262,6 +263,7 @@ final class CatPhysics {
         isManualCustomAction = manual
         customAction = action
         customActionAge = 0
+        customPoseAge = 0
         customDuration = duration
     }
 
@@ -274,6 +276,7 @@ final class CatPhysics {
     private func stepCustomPose(dt: CGFloat, idleSeconds: CFTimeInterval,
                                 keys: Set<PhysicalKey>, mouseVelocity: CGVector,
                                 mouseDown: Bool, petting: Bool) {
+        customPoseAge += dt
         if CatSettings.shared.coatTheme != .customTuxedo {
             customAction = nil
             isManualCustomAction = false
@@ -311,7 +314,7 @@ final class CatPhysics {
         }
         if customDisplayedPose != desired {
             customPoseOpacity = max(0, customPoseOpacity-dt/0.14)
-            if customPoseOpacity <= 0 { customDisplayedPose = desired }
+            if customPoseOpacity <= 0 { customDisplayedPose = desired; customPoseAge = 0 }
         } else {
             customPoseOpacity = min(1, customPoseOpacity+dt/0.14)
         }

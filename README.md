@@ -18,7 +18,9 @@
 | :---: | :---: |
 | <img src="assets/actions/belly.gif" width="320" alt="露肚抱爪动态预览"> | <img src="assets/actions/groom.gif" width="320" alt="抬腿洗脸动态预览"> |
 
-五个专属动作可从右键菜单的“专属动作”中选择。新按键或鼠标点击会恢复桌面互动。
+五个专属动作可从右键菜单的“专属动作”中选择，也会在闲置时自动播放。每个动作使用独立的六秒循环：招呼的手臂和手腕分开摆动并配有动作线，小睡时单耳约 0.2 秒快速折回，露肚时对称眯眼轻晃，梳洗时从嘴中央伸舌，观察时轻轻回头。新的按键或鼠标点击会恢复桌面互动。
+
+移动部件独立绘制，避免手臂动作拉动脸部；睁眼姿态保留鼠标眼动跟随。
 
 ## 功能
 
@@ -55,6 +57,7 @@ open KuroCat.app
 ## 验证
 
 ~~~sh
+bash scripts/check-idle.sh
 bash scripts/check-desk-cat.sh
 bash scripts/check-custom-cat.sh
 bash scripts/check-skins.sh

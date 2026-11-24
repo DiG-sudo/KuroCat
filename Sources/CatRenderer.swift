@@ -1352,7 +1352,7 @@ enum CatRenderer {
             ctx.restoreGState()
         }
     }
-    // MARK: - Complete original poses with continuous deformation, no cut-and-paste anatomy
+    // MARK: - Approved illustrated poses and isolated idle animation layers
     private static func drawCustomCat(in ctx: CGContext, physics p: CatPhysics) {
         let id=p.customDisplayedPose
         guard let image=DeskCatArtwork.animatedImage(id,physics:p) else { return }
@@ -1561,25 +1561,6 @@ enum DeskCatArtwork {
             float wr=smoothstep(307.0,326.0,x)*(1.0-smoothstep(375.0,390.0,x))*smoothstep(290.0,321.0,y)*(1.0-smoothstep(366.0,380.0,y));
             d=vec2(motion.x*wl,motion.y*wl);
         }
-        if (scene > 0.5 && scene < 1.5) {
-            vec2 q=(vec2(x,y)-vec2(147.0,211.0))/vec2(38.0,42.0);
-            d.x+=sin(t*2.5)*1.1*(1.0-smoothstep(0.75,1.0,length(q)));
-        }
-        if (scene > 1.5 && scene < 4.5) {
-            vec2 center=scene<2.5 ? vec2(210.0,300.0) : (scene<3.5 ? vec2(252.0,277.0) : vec2(285.0,320.0));
-            vec2 q=(vec2(x,y)-center)/vec2(65.0,42.0);
-            d.y+=sin(t*1.7)*0.55*exp(-dot(q,q));
-        }
-        if (scene > 0.5 && eyes.x > 0.0) {
-            vec2 q=(vec2(x,y)-eyes.xy)/vec2(12.0,11.0);
-            float w=1.0-smoothstep(0.69,1.0,length(q));
-            d+=detail.xy*w;
-        }
-        if (scene > 0.5 && eyes.z > 0.0) {
-            vec2 q=(vec2(x,y)-eyes.zw)/vec2(12.0,11.0);
-            float w=1.0-smoothstep(0.69,1.0,length(q));
-            d+=detail.xy*w;
-        }
         return vec2(p.x-d.x,p.y+d.y);
     }
     """)
@@ -1654,6 +1635,9 @@ enum DeskCatArtwork {
         }
     }
     static func animatedImage(_ id:String,physics p:CatPhysics)->CGImage? {
+        if id != "sit_base" {
+            return DeskCatIdleAnimation.image(id,age:p.customPoseAge,gaze:p.eyeGaze.point) ?? images[id]
+        }
         guard let originalSource=sources[id],let kernel else { return images[id] }
         let source = id == "sit_base" ? (workBackground ?? originalSource) : originalSource
         let index=sceneIDs.firstIndex(of:id) ?? 0
@@ -1696,5 +1680,277 @@ enum DeskCatArtwork {
             cg.move(to:CGPoint(x:x-9,y:134));cg.addQuadCurve(to:CGPoint(x:x+9,y:134),control:CGPoint(x:x,y:140));cg.strokePath()
         }
         return cg.makeImage()
+    }
+}
+
+
+/// Approved six-second idle cycles. Moving limbs are isolated image layers;
+/// shoulder/wrist pivots never deform facial pixels or neighbouring body parts.
+enum DeskCatIdleAnimation {
+    static let poseIDs = ["wave", "rest_side", "belly_hug", "groom_leg", "observe"]
+    private static let originals = poseIDs.compactMap { DeskCatArtwork.images[$0] }
+    private static let waveClean:CGImage? = {
+        let folder=ProcessInfo.processInfo.environment["KUROCAT_ARTWORK_DIR"].map { URL(fileURLWithPath:$0) }
+            ?? Bundle.main.resourceURL!.appendingPathComponent("CustomCat")
+        return NSImage(contentsOf:folder.appendingPathComponent("idle-wave-underlay.png"))?.cgImage(forProposedRect:nil,context:nil,hints:nil)
+    }()
+    static func image(_ id:String, age:CGFloat, gaze:CGPoint = .zero)->CGImage? {
+        guard originals.count==poseIDs.count, waveClean != nil,
+              let index=poseIDs.firstIndex(of:id) else { return nil }
+        return renderPose(index,Double(max(0,age)).truncatingRemainder(dividingBy:6),gaze)
+    }
+    private static func canvas(_ w:Int=512,_ h:Int=460)->CGContext {CGContext(data:nil,width:w,height:h,bitsPerComponent:8,bytesPerRow:w*4,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue)!}
+    private static func xyCanvas()->CGContext {let c=canvas();c.translateBy(x:0,y:500);c.scaleBy(x:1,y:-1);c.setShouldAntialias(true);return c}
+    private static func draw(_ im:CGImage,_ c:CGContext) {c.saveGState();c.translateBy(x:0,y:500);c.scaleBy(x:1,y:-1);c.draw(im,in:CGRect(x:0,y:0,width:512,height:460));c.restoreGState()}
+    private static func smooth(_ a:Double,_ b:Double,_ x:Double)->Double {let q=max(0,min(1,(x-a)/(b-a)));return q*q*(3-2*q)}
+    private static func pulse(_ t:Double,_ start:Double,_ duration:Double)->Double {let q=(t-start)/duration;return q>0 && q<1 ? pow(sin(q*Double.pi),2):0}
+    private static func lick(_ t:Double)->Double {[0.65,1.18,1.71,3.55,4.08,4.61].map{pulse(t,$0,0.38)}.max()!}
+    private static func polygon(_ points:[CGPoint])->CGPath {let p=CGMutablePath();p.addLines(between:points);p.closeSubpath();return p}
+    private static func rotate(_ c:CGContext,_ pivot:CGPoint,_ angle:Double) {c.translateBy(x:pivot.x,y:pivot.y);c.rotate(by:angle);c.translateBy(x:-pivot.x,y:-pivot.y)}
+    private static func moved(_ point:CGPoint,_ pivot:CGPoint,_ a:Double)->CGPoint {let x=point.x-pivot.x,y=point.y-pivot.y;return CGPoint(x:pivot.x+x*cos(a)-y*sin(a),y:pivot.y+x*sin(a)+y*cos(a))}
+    // Explicit isolation; never sample facial pixels into a moving limb layer.
+    private static let armRegion=polygon([CGPoint(x:105,y:167),CGPoint(x:146,y:166),CGPoint(x:184,y:208),CGPoint(x:193,y:216),CGPoint(x:201,y:225),CGPoint(x:210,y:234),CGPoint(x:234,y:253),CGPoint(x:242,y:284),CGPoint(x:197,y:292),CGPoint(x:173,y:276),CGPoint(x:144,y:230),CGPoint(x:109,y:214)])
+    private static let palmHalf=polygon([CGPoint(x:0,y:40),CGPoint(x:323,y:40),CGPoint(x:181,y:182),CGPoint(x:132,y:231),CGPoint(x:0,y:363)])
+    private static let armHalf=polygon([CGPoint(x:177,y:180),CGPoint(x:512,y:180),CGPoint(x:512,y:500),CGPoint(x:0,y:500),CGPoint(x:0,y:357),CGPoint(x:130,y:227)])
+    private static func isolated(_ image:CGImage,_ paths:[CGPath])->CGImage {let c=xyCanvas();for p in paths {c.addPath(p);c.clip()};draw(image,c);return c.makeImage()!}
+    private static let armLayer=isolated(originals[0],[armRegion,armHalf])
+    private static let palmLayer=isolated(originals[0],[armRegion,palmHalf])
+    private static let waveBase:CGImage={
+     let c=xyCanvas();draw(originals[0],c);c.saveGState();c.addPath(armRegion);c.clip();c.setBlendMode(.copy);draw(waveClean!,c);c.restoreGState();return c.makeImage()!
+    }()
+    // Fold ONLY the upper half of the tall ear. Lower ear and the other ear stay fixed.
+    private static let earTip:CGPath={
+     let p=CGMutablePath();p.move(to:CGPoint(x:263,y:180));p.addLine(to:CGPoint(x:327,y:180));p.addLine(to:CGPoint(x:327,y:218));p.addCurve(to:CGPoint(x:263,y:218),control1:CGPoint(x:313,y:225),control2:CGPoint(x:277,y:225));p.closeSubpath();return p
+    }()
+    private static let earLayer=isolated(originals[1],[earTip])
+    private static let earBack:CGImage={let c=xyCanvas();draw(earLayer,c);c.setBlendMode(.sourceIn);c.setFillColor(red:0.15,green:0.125,blue:0.11,alpha:1);c.fill(CGRect(x:0,y:40,width:512,height:460));return c.makeImage()!}()
+    private static let napBase:CGImage={let c=xyCanvas();draw(originals[1],c);c.addPath(earTip);c.clip();c.clear(CGRect(x:0,y:40,width:512,height:460));return c.makeImage()!}()
+
+    private static func earTwitch(_ t:Double,_ start:Double,_ down:Double=0.06,_ back:Double=0.14)->Double {
+     let age=t-start
+     if age<0 || age>down+back {return 0}
+     return age<down ? smooth(0,down,age) : 1-smooth(0,back,age-down)
+    }
+    private static func eye(_ c:CGContext,_ close:Double,_ localX:CGFloat) {
+     guard close>0 else{return}
+     c.saveGState();c.translateBy(x:335.25,y:153.75);c.rotate(by:atan2(25.5,49.5));c.translateBy(x:localX,y:0)
+     c.addEllipse(in:CGRect(x:-14.5,y:-13.5,width:29,height:27));c.clip()
+     let gap=CGFloat(1-close)*28
+     c.setFillColor(red:36/255,green:30/255,blue:27/255,alpha:1)
+     c.fill(CGRect(x:-16,y:-15,width:32,height:15-gap/2));c.fill(CGRect(x:-16,y:gap/2,width:32,height:16))
+     if close>0.9 {
+      c.setAlpha(smooth(0.9,1,close));c.setStrokeColor(red:0.67,green:0.65,blue:0.25,alpha:1);c.setLineWidth(2.2);c.setLineCap(.round)
+      c.move(to:CGPoint(x:-10.5,y:-0.7));c.addQuadCurve(to:CGPoint(x:10.5,y:-0.7),control:CGPoint(x:0,y:3.5));c.strokePath()
+     }
+     c.restoreGState()
+    }
+    // Exact previously approved observation renderer, used only for that unchanged pose.
+    private static let ci=CIContext(options:[.cacheIntermediates:false])
+    private static let observeRig=CIWarpKernel(source:"""
+    kernel vec2 approvedObserve(float angle,float squeeze,float offset) {
+     vec2 p=destCoord();vec2 q=vec2(p.x,500.0-p.y);vec2 base=vec2(264.0,226.0);vec2 r=q-base;
+     float w=(1.0-smoothstep(181.0,259.0,q.y))*smoothstep(155.0,185.0,q.x);
+     float a=-angle;vec2 v=vec2(cos(a)*r.x-sin(a)*r.y,sin(a)*r.x+cos(a)*r.y)+base;
+     v.x=base.x+(v.x-base.x)/(1.0-squeeze)-offset;
+     vec2 s=q+(v-q)*w;return vec2(s.x,500.0-s.y);
+    }
+    """)!
+    private static func renderPose(_ scene:Int,_ t:Double,_ gaze:CGPoint)->CGImage {
+     let c=xyCanvas()
+     if scene==0 {
+      draw(waveBase,c);drawTrackedEyes(0,gaze,in:c)
+      let phase=t.truncatingRemainder(dividingBy:3),shoulder=CGPoint(x:211,y:266),wrist=CGPoint(x:153,y:210)
+      let env=smooth(0.12,0.4,phase)*(1-smooth(1.78,2.1,phase))
+      let a=sin((phase-0.4)*Double.pi*2/0.75)*0.125*env,b=sin((phase-0.4)*Double.pi*2/0.75-0.7)*0.17*env
+      let paw=moved(moved(CGPoint(x:134,y:196),wrist,b),shoulder,a)
+      if env>0.08 {
+       c.saveGState();c.setStrokeColor(red:0.45,green:0.39,blue:0.34,alpha:env*(0.27+0.20*abs(cos(phase*Double.pi*2/0.75))));c.setLineWidth(1.8);c.setLineCap(.round)
+       for radius:CGFloat in [35,43] {c.addArc(center:paw,radius:radius,startAngle:2.75,endAngle:3.75,clockwise:false);c.strokePath()};c.restoreGState()
+      }
+      c.saveGState();rotate(c,shoulder,a)
+      // Round shoulder / wrist caps hide only the cut edges; no bitmap deformation.
+      c.setFillColor(red:1,green:0.96,blue:0.91,alpha:1);c.fillEllipse(in:CGRect(x:199,y:254,width:25,height:25))
+      draw(armLayer,c)
+      c.setFillColor(red:1,green:0.96,blue:0.91,alpha:1);c.fillEllipse(in:CGRect(x:145,y:202,width:16,height:16))
+      rotate(c,wrist,b);draw(palmLayer,c);c.restoreGState()
+      return c.makeImage()!
+     }
+     if scene==1 {
+      let amount=earTwitch(t,0.94)+earTwitch(t,3.70)*0.92+earTwitch(t,4.0,0.045,0.10)*0.24
+      if amount<0.001 {draw(originals[1],c);return c.makeImage()!}
+      draw(napBase,c)
+      let theta=amount*2.0,hinge=CGPoint(x:294,y:221),hingeAngle=0.061
+      c.saveGState();c.translateBy(x:hinge.x,y:hinge.y);c.rotate(by:hingeAngle);c.scaleBy(x:1,y:cos(theta));c.rotate(by:-hingeAngle);c.translateBy(x:-hinge.x,y:-hinge.y)
+      if theta<Double.pi/2 {draw(earLayer,c)} else {
+       // The reverse of the folded tip has dark outer fur, not a stretched pink triangle.
+       draw(earBack,c)
+       // Rounded silhouette and warm rim make the forward-folded outer surface readable.
+       let fold=CGMutablePath();fold.move(to:CGPoint(x:268,y:219));fold.addCurve(to:CGPoint(x:296,y:190),control1:CGPoint(x:279,y:190),control2:CGPoint(x:286,y:185));fold.addCurve(to:CGPoint(x:322,y:219),control1:CGPoint(x:310,y:192),control2:CGPoint(x:318,y:207));fold.addQuadCurve(to:CGPoint(x:268,y:219),control:CGPoint(x:295,y:227));fold.closeSubpath()
+       c.addPath(fold);c.setFillColor(red:0.20,green:0.168,blue:0.145,alpha:1);c.setStrokeColor(red:0.34,green:0.29,blue:0.25,alpha:0.45);c.setLineWidth(1.1);c.drawPath(using:.fillStroke)
+      }
+      c.restoreGState()
+      if amount>0.1 {
+       c.setStrokeColor(red:0.12,green:0.10,blue:0.09,alpha:amount*0.22);c.setLineWidth(1.0);c.setLineCap(.round)
+       c.move(to:CGPoint(x:277,y:220));c.addQuadCurve(to:CGPoint(x:312,y:221),control:CGPoint(x:294,y:225));c.strokePath()
+      }
+      return c.makeImage()!
+     }
+     if scene==2 {
+      let env=smooth(0.7,1.2,t)*(1-smooth(4.6,5.2,t)),wiggle=sin(t*Double.pi*2/1.4)*env
+      // Rigid transform preserves every limb's proportions and the head/body connection.
+      c.translateBy(x:wiggle*0.5,y:0);rotate(c,CGPoint(x:267,y:391),wiggle*0.008)
+      draw(originals[2],c);drawTrackedEyes(2,gaze,in:c)
+      let close=smooth(0.35,1.05,t)*(1-smooth(4.8,5.55,t)),spacing:CGFloat=hypot(49.5,25.5)/2
+      eye(c,close,-spacing);eye(c,close,spacing)
+      return c.makeImage()!
+     }
+     if scene==3 {
+      draw(originals[3],c)
+      let e=lick(t)
+      if e>0.015 {
+       // Nose, philtrum, tongue root and centre crease share one face-local axis.
+       // The illustrated face is tilted, so the tongue follows that axis rather than screen vertical.
+       let mouth=CGPoint(x:227,y:292),length=CGFloat(18*e)
+       c.saveGState();c.translateBy(x:mouth.x,y:mouth.y);c.rotate(by:-atan2(3.5,12.5))
+       c.setFillColor(red:0.80,green:0.49,blue:0.50,alpha:1);c.setStrokeColor(red:0.36,green:0.24,blue:0.23,alpha:1);c.setLineWidth(1.2)
+       // Both outline halves are exact mirrors about x=0; no lateral drift during extension.
+       c.move(to:CGPoint(x:-4.2,y:0));c.addCurve(to:CGPoint(x:-5.1,y:length),control1:CGPoint(x:-4.6,y:min(4,length*0.4)),control2:CGPoint(x:-5.1,y:max(length*0.7,length-3)))
+       c.addCurve(to:CGPoint(x:5.1,y:length),control1:CGPoint(x:-5.1,y:length+4),control2:CGPoint(x:5.1,y:length+4))
+       c.addCurve(to:CGPoint(x:4.2,y:0),control1:CGPoint(x:5.1,y:max(length*0.7,length-3)),control2:CGPoint(x:4.6,y:min(4,length*0.4)));c.closePath();c.drawPath(using:.fillStroke)
+       if e>0.3 {c.setStrokeColor(red:0.64,green:0.36,blue:0.38,alpha:1);c.setLineWidth(0.7);c.move(to:CGPoint(x:0,y:3));c.addLine(to:CGPoint(x:0,y:length-0.5));c.strokePath()}
+       c.restoreGState()
+       // Restore only the thin upper mouth edge; the old tall mask pushed the visible tongue below the mouth.
+       c.saveGState();c.clip(to:CGRect(x:217,y:290.5,width:20,height:1.7));draw(originals[3],c);c.restoreGState()
+      }
+      return c.makeImage()!
+     }
+     let im=canvas();im.draw(originals[4],in:CGRect(x:0,y:0,width:512,height:460));im.saveGState();im.translateBy(x:0,y:500);im.scaleBy(x:1,y:-1);drawTrackedEyes(4,gaze,in:im);im.restoreGState();let input=CIImage(cgImage:im.makeImage()!)
+     let phase=t*Double.pi*2/6,s=sin(phase)
+     let result=observeRig.apply(extent:input.extent,roiCallback:{_,r in r.insetBy(dx:-40,dy:-40)},image:input,arguments:[s*0.038,(1-cos(phase))*0.015,s*2.6])!
+     return ci.createCGImage(result,from:input.extent)!
+    }
+
+    // Eye outlines and pupil silhouettes come from the source pixels. In particular,
+    // the profile eye must not be replaced by a generic circle on the white blaze.
+    private struct TrackedEye {
+        let bounds:CGRect
+        let outline:CGPath
+        let iris:CGImage
+        let pupil:CGImage
+    }
+    private struct EyePixel {
+        let point:CGPoint
+        let r:CGFloat
+        let g:CGFloat
+        let b:CGFloat
+    }
+    private static func cross(_ o:CGPoint,_ a:CGPoint,_ b:CGPoint)->CGFloat {
+        (a.x-o.x)*(b.y-o.y)-(a.y-o.y)*(b.x-o.x)
+    }
+    private static func hull(_ points:[CGPoint])->[CGPoint] {
+        let sorted=points.sorted { $0.x == $1.x ? $0.y < $1.y : $0.x < $1.x }
+        var lower:[CGPoint]=[],upper:[CGPoint]=[]
+        for p in sorted {
+            while lower.count>=2 && cross(lower[lower.count-2],lower[lower.count-1],p)<=0 {lower.removeLast()}
+            lower.append(p)
+        }
+        for p in sorted.reversed() {
+            while upper.count>=2 && cross(upper[upper.count-2],upper[upper.count-1],p)<=0 {upper.removeLast()}
+            upper.append(p)
+        }
+        return Array(lower.dropLast())+Array(upper.dropLast())
+    }
+    private static func makeEye(_ scene:Int,_ search:CGRect)->TrackedEye? {
+        let original=NSBitmapImageRep(cgImage:originals[scene])
+        var yellow:[EyePixel]=[]
+        for y in Int(search.minY)..<Int(search.maxY) {
+            for x in Int(search.minX)..<Int(search.maxX) {
+                guard let c=original.colorAt(x:x,y:y-40)?.usingColorSpace(.deviceRGB) else {continue}
+                if c.redComponent>0.39 && c.greenComponent>0.39 && c.blueComponent<0.44 &&
+                    min(c.redComponent,c.greenComponent)-c.blueComponent>0.14 {
+                    yellow.append(EyePixel(point:CGPoint(x:CGFloat(x)+0.5,y:CGFloat(y)+0.5),r:c.redComponent,g:c.greenComponent,b:c.blueComponent))
+                }
+            }
+        }
+        guard yellow.count>15 else {return nil}
+        let contour=hull(yellow.map(\.point)),outline=polygon(contour)
+        let bounds=outline.boundingBoxOfPath.insetBy(dx:-1,dy:-1).integral
+        let width=Int(bounds.width),height=Int(bounds.height)
+        // Restrict extraction to the dark pupil and its antialiased edge;
+        // darker variations elsewhere in the golden iris are texture, not pupil pixels.
+        var pupilArea=Set<Int>()
+        for y in 0..<height {for x in 0..<width {
+            let point=CGPoint(x:bounds.minX+CGFloat(x)+0.5,y:bounds.minY+CGFloat(y)+0.5)
+            guard outline.contains(point),
+                  let c=original.colorAt(x:Int(bounds.minX)+x,y:Int(bounds.minY)+y-40)?.usingColorSpace(.deviceRGB),
+                  max(c.redComponent,max(c.greenComponent,c.blueComponent))<0.45,
+                  abs(c.greenComponent-c.blueComponent)<0.13 else {continue}
+            for dy in -2...2 {for dx in -2...2 where dx*dx+dy*dy<=4 {
+                let xx=x+dx,yy=y+dy
+                if xx>=0 && yy>=0 && xx<width && yy<height {pupilArea.insert(yy*width+xx)}
+            }}
+        }}
+        var irisBytes=[UInt8](repeating:0,count:width*height*4)
+        var pupilBytes=irisBytes
+        func write(_ bytes:inout [UInt8],_ x:Int,_ y:Int,_ r:CGFloat,_ g:CGFloat,_ b:CGFloat,_ a:CGFloat) {
+            let i=(y*width+x)*4
+            for (offset,value) in [r,g,b,a].enumerated() {bytes[i+offset]=UInt8(max(0,min(255,(value*255).rounded())))}
+        }
+        for y in 0..<height {for x in 0..<width {
+            let point=CGPoint(x:bounds.minX+CGFloat(x)+0.5,y:bounds.minY+CGFloat(y)+0.5)
+            guard let c=original.colorAt(x:Int(bounds.minX)+x,y:Int(bounds.minY)+y-40)?.usingColorSpace(.deviceRGB) else {continue}
+            write(&irisBytes,x,y,c.redComponent,c.greenComponent,c.blueComponent,c.alphaComponent)
+            guard outline.contains(point),pupilArea.contains(y*width+x) else {continue}
+            let highlight=c.redComponent>0.65 && c.greenComponent>0.65 && c.blueComponent>0.55
+            guard c.greenComponent<0.68 || highlight else {continue}
+            // Reconstruct only the pupil hole from nearby original iris colours;
+            // the original golden border and its irregular silhouette remain intact.
+            let neighbours=yellow.sorted {
+                hypot($0.point.x-point.x,$0.point.y-point.y)<hypot($1.point.x-point.x,$1.point.y-point.y)
+            }.prefix(12)
+            var total:CGFloat=0,r:CGFloat=0,g:CGFloat=0,b:CGFloat=0
+            for n in neighbours {
+                let dx=n.point.x-point.x,dy=n.point.y-point.y,w=1/max(1,dx*dx+dy*dy)
+                total+=w;r+=n.r*w;g+=n.g*w;b+=n.b*w
+            }
+            r/=total;g/=total;b/=total
+            let alpha:CGFloat=highlight ? 1 : max(0,min(1,max((r-c.redComponent)/max(r,0.01),max((g-c.greenComponent)/max(g,0.01),(b-c.blueComponent)/max(b,0.01)))))
+            guard alpha>0.035 else {continue}
+            write(&irisBytes,x,y,r,g,b,1)
+            func unmatte(_ value:CGFloat,_ background:CGFloat)->CGFloat {max(0,min(1,(value-background*(1-alpha))/alpha))}
+            write(&pupilBytes,x,y,unmatte(c.redComponent,r),unmatte(c.greenComponent,g),unmatte(c.blueComponent,b),alpha)
+        }}
+        func image(_ bytes:[UInt8])->CGImage? {
+            guard let provider=CGDataProvider(data:Data(bytes) as CFData) else {return nil}
+            return CGImage(width:width,height:height,bitsPerComponent:8,bitsPerPixel:32,bytesPerRow:width*4,
+                space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGBitmapInfo(rawValue:CGImageAlphaInfo.last.rawValue),
+                provider:provider,decode:nil,shouldInterpolate:true,intent:.defaultIntent)
+        }
+        guard let irisImage=image(irisBytes),let pupilImage=image(pupilBytes) else {return nil}
+        return TrackedEye(bounds:bounds,outline:outline,iris:irisImage,pupil:pupilImage)
+    }
+    private static let trackingEyes:[Int:[TrackedEye]] = {
+        let searches:[Int:[CGRect]] = [
+            0:[CGRect(x:201,y:144,width:34,height:31),CGRect(x:247,y:161,width:33,height:34)],
+            2:[CGRect(x:294,y:122,width:35,height:38),CGRect(x:343,y:149,width:35,height:36)],
+            4:[CGRect(x:283,y:133,width:35,height:39)]
+        ]
+        var result:[Int:[TrackedEye]]=[:]
+        for (scene,rects) in searches {result[scene]=rects.compactMap {makeEye(scene,$0)}}
+        return result
+    }()
+    private static func drawPatch(_ image:CGImage,_ bounds:CGRect,in c:CGContext) {
+        c.saveGState();c.translateBy(x:bounds.minX,y:bounds.maxY);c.scaleBy(x:1,y:-1)
+        c.draw(image,in:CGRect(origin:.zero,size:bounds.size));c.restoreGState()
+    }
+    private static func drawTrackedEyes(_ scene:Int,_ gaze:CGPoint,in c:CGContext) {
+        guard abs(gaze.x)+abs(gaze.y)>0.02,let eyes=trackingEyes[scene] else {return}
+        let dx=max(-1,min(1,gaze.x))*2.4,dy=max(-1,min(1,gaze.y))*1.4
+        for eye in eyes {
+            c.saveGState();c.addPath(eye.outline);c.clip()
+            drawPatch(eye.iris,eye.bounds,in:c)
+            drawPatch(eye.pupil,eye.bounds.offsetBy(dx:dx,dy:dy),in:c)
+            c.restoreGState()
+        }
     }
 }
