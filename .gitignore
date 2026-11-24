@@ -11,3 +11,18 @@ linux/*.tar.gz
 preview.png
 preview_siamese.png
 *.log
+
+
+# Local design iterations, screenshots and diagnostic records
+assets/custom-cat-v*/
+assets/desk-cat-v*/
+assets/desk-cat-minimal-v*/
+assets/desk-keymap-v*/
+assets/desk-tracking-v*/
+assets/ui-interaction-v*/
+*.app/
+*.dSYM/
+
+# Local-only input probing prototypes
+scripts/live-input-test.swift
+tests/live-ui/

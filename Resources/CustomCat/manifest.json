@@ -1,0 +1,732 @@
+{
+  "schema_version": 1,
+  "status": "design_masters_not_runtime_animation",
+  "style": "KuroCat flat 2D vector-like",
+  "generator": "built-in image_gen",
+  "reference_count": 11,
+  "identity": {
+    "coat": "black-and-white shorthaired",
+    "shape": "rounded cheeks, compact muzzle, solid rounded torso",
+    "face": "black cap and eye patches, narrow irregular white forehead blaze widening to muzzle and chin",
+    "nose": "near-black inverted triangle/heart with irregular upper edge",
+    "eyes": "muted yellow-green/golden olive",
+    "body": "white nape/shoulder wrap joining bib; continuous black saddle, irregular white lower haunch/flank patch, white belly, black tail",
+    "paws": "white with sparse black speckles and dark charcoal pads",
+    "uncertainty": "两侧花纹未在自然站姿下完整展示，远侧隐藏边界和四只爪垫的独立图案仍未确认；不将对称镜像当作真实观察。"
+  },
+  "sources": [
+    {
+      "id": "R01",
+      "file": "IMG_1227.HEIC",
+      "use": "reclining head, relaxed eyelids, shoulder/neck boundary",
+      "group": "rest"
+    },
+    {
+      "id": "R02",
+      "file": "IMG_1401.HEIC",
+      "use": "upright torso, single paw on edge, curious head angle",
+      "group": "reach"
+    },
+    {
+      "id": "R03",
+      "file": "sleep-closeup.jpg",
+      "use": "closed eyelids, muzzle, dark pads, spotted white forelimb",
+      "group": "rest"
+    },
+    {
+      "id": "R04",
+      "file": "belly-up.jpg",
+      "use": "round white belly, bent forepaws, black flank patch",
+      "group": "belly"
+    },
+    {
+      "id": "R05",
+      "file": "front-sit.jpg",
+      "use": "primary facial identity, full-body proportions, white chest",
+      "group": "sit"
+    },
+    {
+      "id": "R06",
+      "file": "groom.jpg",
+      "use": "raised hind leg crossing face, bent spine, curled black tail",
+      "group": "groom"
+    },
+    {
+      "id": "R07",
+      "file": "R07-belly-detail.jpg",
+      "use": "same capture as R04 with different crop"
+    },
+    {
+      "id": "R08",
+      "file": "R08-back-nape.jpg",
+      "use": "white nape band, continuous saddle, visible flank patch"
+    },
+    {
+      "id": "R09",
+      "file": "R09-curled-rest.jpg",
+      "use": "white neck wrap and limb spots in curled posture"
+    },
+    {
+      "id": "R10",
+      "file": "R10-side-saddle.jpg",
+      "use": "black back continuity, white haunch and speckled limbs"
+    },
+    {
+      "id": "R11",
+      "file": "R11-side-rest.jpg",
+      "use": "white belly/chest and black saddle side boundary"
+    }
+  ],
+  "deduplication": [
+    {
+      "merge": [
+        "R01",
+        "R03"
+      ],
+      "keep": "rest_side",
+      "reason": "one resting skeleton; open/half-closed/closed eyes become reusable face states"
+    },
+    {
+      "merge": [
+        "front-sit",
+        "future-typing",
+        "future-mouse"
+      ],
+      "keep": "sit_base",
+      "reason": "same seated torso; swap articulated forepaw position rather than redrawing the whole cat"
+    },
+    {
+      "keep": "reach_edge",
+      "reason": "long upright body and one paw braced against an edge"
+    },
+    {
+      "keep": "belly_hug",
+      "reason": "belly up, forepaws curled toward chest"
+    },
+    {
+      "keep": "groom_leg",
+      "reason": "raised hind leg across face; distinguish from a forepaw wave"
+    },
+    {
+      "merge": [
+        "R04",
+        "R07"
+      ],
+      "keep": "belly_hug",
+      "reason": "same capture, different crop; no new action"
+    },
+    {
+      "merge": [
+        "R01",
+        "R03",
+        "R09",
+        "R10",
+        "R11"
+      ],
+      "keep": "rest_family",
+      "reason": "additional sleep photos refine coat, without duplicate action IDs"
+    }
+  ],
+  "atlases": [
+    {
+      "file": "heads.png",
+      "layout": {
+        "columns": 3,
+        "rows": 2
+      },
+      "cells": [
+        "front_open",
+        "left_three_quarter_open",
+        "right_three_quarter_open",
+        "left_profile_open",
+        "right_profile_open",
+        "front_closed"
+      ],
+      "size_px": [
+        1536,
+        1024
+      ],
+      "frames": [
+        {
+          "id": "front_open",
+          "extraction_rect_xywh": [
+            0,
+            0,
+            508,
+            509
+          ],
+          "content_bbox_in_frame_alpha_gt_32": [
+            80,
+            69,
+            470,
+            476
+          ],
+          "margin_px": 33,
+          "pivot": "not_calibrated"
+        },
+        {
+          "id": "left_three_quarter_open",
+          "extraction_rect_xywh": [
+            508,
+            0,
+            494,
+            509
+          ],
+          "content_bbox_in_frame_alpha_gt_32": [
+            40,
+            59,
+            439,
+            477
+          ],
+          "margin_px": 32,
+          "pivot": "not_calibrated"
+        },
+        {
+          "id": "right_three_quarter_open",
+          "extraction_rect_xywh": [
+            1002,
+            0,
+            534,
+            509
+          ],
+          "content_bbox_in_frame_alpha_gt_32": [
+            57,
+            70,
+            464,
+            479
+          ],
+          "margin_px": 30,
+          "pivot": "not_calibrated"
+        },
+        {
+          "id": "left_profile_open",
+          "extraction_rect_xywh": [
+            0,
+            509,
+            506,
+            515
+          ],
+          "content_bbox_in_frame_alpha_gt_32": [
+            65,
+            32,
+            452,
+            465
+          ],
+          "margin_px": 32,
+          "pivot": "not_calibrated"
+        },
+        {
+          "id": "right_profile_open",
+          "extraction_rect_xywh": [
+            506,
+            509,
+            495,
+            515
+          ],
+          "content_bbox_in_frame_alpha_gt_32": [
+            55,
+            33,
+            443,
+            465
+          ],
+          "margin_px": 33,
+          "pivot": "not_calibrated"
+        },
+        {
+          "id": "front_closed",
+          "extraction_rect_xywh": [
+            1001,
+            509,
+            535,
+            515
+          ],
+          "content_bbox_in_frame_alpha_gt_32": [
+            53,
+            45,
+            464,
+            467
+          ],
+          "margin_px": 45,
+          "pivot": "not_calibrated"
+        }
+      ],
+      "extraction_note": "Use per-frame rectangles; layout is conceptual, not an exactly even slicing grid. No output image pixels were postprocessed."
+    },
+    {
+      "file": "poses.png",
+      "layout": {
+        "columns": 3,
+        "rows": 2
+      },
+      "cells": [
+        "sit_base",
+        "reach_edge",
+        "rest_side",
+        "belly_hug",
+        "groom_leg",
+        "rear_three_quarter"
+      ],
+      "note": "nape/visible flank updated using rear and side photos; hidden far side remains uncertain",
+      "size_px": [
+        1536,
+        1024
+      ],
+      "frames": [
+        {
+          "id": "sit_base",
+          "extraction_rect_xywh": [
+            0,
+            0,
+            514,
+            504
+          ],
+          "content_bbox_in_frame_alpha_gt_32": [
+            179,
+            98,
+            398,
+            422
+          ],
+          "margin_px": 82,
+          "pivot": "not_calibrated"
+        },
+        {
+          "id": "reach_edge",
+          "extraction_rect_xywh": [
+            514,
+            0,
+            469,
+            504
+          ],
+          "content_bbox_in_frame_alpha_gt_32": [
+            117,
+            92,
+            362,
+            427
+          ],
+          "margin_px": 77,
+          "pivot": "not_calibrated"
+        },
+        {
+          "id": "rest_side",
+          "extraction_rect_xywh": [
+            983,
+            0,
+            553,
+            504
+          ],
+          "content_bbox_in_frame_alpha_gt_32": [
+            88,
+            192,
+            437,
+            394
+          ],
+          "margin_px": 88,
+          "pivot": "not_calibrated"
+        },
+        {
+          "id": "belly_hug",
+          "extraction_rect_xywh": [
+            0,
+            504,
+            523,
+            520
+          ],
+          "content_bbox_in_frame_alpha_gt_32": [
+            141,
+            82,
+            413,
+            422
+          ],
+          "margin_px": 82,
+          "pivot": "not_calibrated"
+        },
+        {
+          "id": "groom_leg",
+          "extraction_rect_xywh": [
+            523,
+            504,
+            493,
+            520
+          ],
+          "content_bbox_in_frame_alpha_gt_32": [
+            111,
+            116,
+            382,
+            413
+          ],
+          "margin_px": 107,
+          "pivot": "not_calibrated"
+        },
+        {
+          "id": "rear_three_quarter",
+          "extraction_rect_xywh": [
+            1016,
+            504,
+            520,
+            520
+          ],
+          "content_bbox_in_frame_alpha_gt_32": [
+            112,
+            79,
+            344,
+            421
+          ],
+          "margin_px": 79,
+          "pivot": "not_calibrated"
+        }
+      ],
+      "extraction_note": "Use per-frame rectangles; layout is conceptual, not an exactly even slicing grid. No output image pixels were postprocessed."
+    },
+    {
+      "file": "parts.png",
+      "layout": {
+        "columns": 4,
+        "rows": 3
+      },
+      "cells": [
+        "torso_front",
+        "torso_three_quarter",
+        "torso_rest_side",
+        "torso_rear",
+        "forelimb_left",
+        "forelimb_right",
+        "hindleg_bent",
+        "hindleg_raised",
+        "tail_relaxed",
+        "tail_curled",
+        "paw_pad",
+        "eyes_closed_overlay"
+      ],
+      "note": "design components require anchor fitting before runtime use; do not assume interchangeable pixel-perfect rigging",
+      "size_px": [
+        1448,
+        1086
+      ],
+      "frames": [
+        {
+          "id": "torso_front",
+          "extraction_rect_xywh": [
+            0,
+            0,
+            358,
+            371
+          ],
+          "content_bbox_in_frame_alpha_gt_32": [
+            55,
+            66,
+            326,
+            355
+          ],
+          "margin_px": 16,
+          "pivot": "not_calibrated"
+        },
+        {
+          "id": "torso_three_quarter",
+          "extraction_rect_xywh": [
+            358,
+            0,
+            341,
+            371
+          ],
+          "content_bbox_in_frame_alpha_gt_32": [
+            34,
+            59,
+            323,
+            353
+          ],
+          "margin_px": 18,
+          "pivot": "not_calibrated"
+        },
+        {
+          "id": "torso_rest_side",
+          "extraction_rect_xywh": [
+            699,
+            0,
+            396,
+            371
+          ],
+          "content_bbox_in_frame_alpha_gt_32": [
+            20,
+            111,
+            368,
+            314
+          ],
+          "margin_px": 20,
+          "pivot": "not_calibrated"
+        },
+        {
+          "id": "torso_rear",
+          "extraction_rect_xywh": [
+            1095,
+            0,
+            353,
+            371
+          ],
+          "content_bbox_in_frame_alpha_gt_32": [
+            29,
+            65,
+            305,
+            348
+          ],
+          "margin_px": 23,
+          "pivot": "not_calibrated"
+        },
+        {
+          "id": "forelimb_left",
+          "extraction_rect_xywh": [
+            0,
+            371,
+            362,
+            366
+          ],
+          "content_bbox_in_frame_alpha_gt_32": [
+            116,
+            35,
+            268,
+            324
+          ],
+          "margin_px": 35,
+          "pivot": "not_calibrated"
+        },
+        {
+          "id": "forelimb_right",
+          "extraction_rect_xywh": [
+            362,
+            371,
+            350,
+            366
+          ],
+          "content_bbox_in_frame_alpha_gt_32": [
+            119,
+            37,
+            272,
+            319
+          ],
+          "margin_px": 37,
+          "pivot": "not_calibrated"
+        },
+        {
+          "id": "hindleg_bent",
+          "extraction_rect_xywh": [
+            712,
+            371,
+            363,
+            366
+          ],
+          "content_bbox_in_frame_alpha_gt_32": [
+            79,
+            66,
+            319,
+            306
+          ],
+          "margin_px": 44,
+          "pivot": "not_calibrated"
+        },
+        {
+          "id": "hindleg_raised",
+          "extraction_rect_xywh": [
+            1075,
+            371,
+            373,
+            366
+          ],
+          "content_bbox_in_frame_alpha_gt_32": [
+            45,
+            17,
+            314,
+            323
+          ],
+          "margin_px": 17,
+          "pivot": "not_calibrated"
+        },
+        {
+          "id": "tail_relaxed",
+          "extraction_rect_xywh": [
+            0,
+            737,
+            377,
+            349
+          ],
+          "content_bbox_in_frame_alpha_gt_32": [
+            38,
+            75,
+            341,
+            266
+          ],
+          "margin_px": 36,
+          "pivot": "not_calibrated"
+        },
+        {
+          "id": "tail_curled",
+          "extraction_rect_xywh": [
+            377,
+            737,
+            353,
+            349
+          ],
+          "content_bbox_in_frame_alpha_gt_32": [
+            38,
+            49,
+            291,
+            296
+          ],
+          "margin_px": 38,
+          "pivot": "not_calibrated"
+        },
+        {
+          "id": "paw_pad",
+          "extraction_rect_xywh": [
+            730,
+            737,
+            328,
+            349
+          ],
+          "content_bbox_in_frame_alpha_gt_32": [
+            64,
+            44,
+            268,
+            289
+          ],
+          "margin_px": 44,
+          "pivot": "not_calibrated"
+        },
+        {
+          "id": "eyes_closed_overlay",
+          "extraction_rect_xywh": [
+            1058,
+            737,
+            390,
+            349
+          ],
+          "content_bbox_in_frame_alpha_gt_32": [
+            62,
+            148,
+            350,
+            184
+          ],
+          "margin_px": 40,
+          "pivot": "not_calibrated"
+        }
+      ],
+      "extraction_note": "Use per-frame rectangles; layout is conceptual, not an exactly even slicing grid. No output image pixels were postprocessed."
+    }
+  ],
+  "reuse": {
+    "idle": {
+      "parts": [
+        "heads.front_open",
+        "parts.torso_front",
+        "parts.forelimb_left",
+        "parts.forelimb_right",
+        "parts.tail_relaxed"
+      ],
+      "motion": "breathing and blink; no new full-body sprite"
+    },
+    "typing": {
+      "parts": [
+        "heads.front_open",
+        "parts.torso_front",
+        "parts.forelimb_left",
+        "parts.forelimb_right",
+        "parts.tail_relaxed"
+      ],
+      "motion": "move only forelimbs and head; keep same torso"
+    },
+    "mouse": {
+      "parts": [
+        "heads.left_three_quarter_open",
+        "parts.torso_front",
+        "parts.forelimb_left",
+        "parts.forelimb_right",
+        "parts.tail_relaxed"
+      ],
+      "motion": "extend forelimb and turn head; calibrate joints"
+    },
+    "rest": {
+      "parts": [
+        "heads.front_closed",
+        "parts.torso_rest_side",
+        "parts.forelimb_left",
+        "parts.forelimb_right",
+        "parts.tail_curled"
+      ],
+      "motion": "rotate/fit head to resting pose, low-amplitude breathing"
+    },
+    "groom": {
+      "parts": [
+        "parts.torso_three_quarter",
+        "parts.hindleg_raised",
+        "parts.forelimb_left",
+        "parts.forelimb_right",
+        "parts.tail_curled"
+      ],
+      "motion": "retain raised hind-leg keypose; head angle requires fitting"
+    }
+  },
+  "integration": "No app source or installed bundle is changed in this asset construction phase. PNG masters are design references for code-native paths or a future layered sprite renderer, not drop-in KuroCat skin imports.",
+  "asset_version": 2,
+  "unique_capture_groups": 10,
+  "base_reference_directory": "../custom-cat-v1/references",
+  "changes_from_v1": [
+    {
+      "id": "nape",
+      "description": "宽白色后颈和肩部毛带，与白胸相接；属于花色，不是项圈",
+      "sources": [
+        "R08",
+        "R09",
+        "R10",
+        "R11"
+      ]
+    },
+    {
+      "id": "saddle",
+      "description": "白色肩带之后为连续大块黑背，延伸至臀部；暖光棕色按光照处理",
+      "sources": [
+        "R08",
+        "R09",
+        "R10",
+        "R11"
+      ]
+    },
+    {
+      "id": "haunch",
+      "description": "可见后腿外侧/后侧腹有不规则白斑，下侧黑白边界不对称，背脊黑色仍连续",
+      "sources": [
+        "R08",
+        "R09",
+        "R10"
+      ],
+      "confidence": "白斑存在已确认，完整边界和解剖学左右归属仍有限"
+    },
+    {
+      "id": "belly",
+      "description": "大面积白胸和白肚",
+      "sources": [
+        "R04",
+        "R07",
+        "R11"
+      ]
+    },
+    {
+      "id": "speckles",
+      "description": "白色四肢近腕踝/爪部有小而不规则的黑灰斑点，不做等大小规则圆点",
+      "sources": [
+        "R03",
+        "R07",
+        "R09",
+        "R10",
+        "R11"
+      ]
+    },
+    {
+      "id": "tail_pads",
+      "description": "可见尾段全黑，无白尾尖或环纹；可见肉垫偏深色",
+      "sources": [
+        "R03",
+        "R04",
+        "R07",
+        "R10"
+      ]
+    }
+  ]
+}

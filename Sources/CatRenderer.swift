@@ -1,6 +1,7 @@
 import Foundation
 import CoreGraphics
 import AppKit
+import CoreImage
 
 enum CatHitZone {
     case none
@@ -47,8 +48,14 @@ enum CatRenderer {
 
     /// Hit test in 360x320 logical canvas coordinates for smart click-through & petting.
     static func hitTest(point p: CGPoint, physics: CatPhysics, showPermissionPill: Bool) -> CatHitZone {
-        if showPermissionPill && permissionPillRect.insetBy(dx: -4, dy: -4).contains(p) {
+        if showPermissionPill && CatSettings.shared.coatTheme != .customTuxedo && permissionPillRect.insetBy(dx: -4, dy: -4).contains(p) {
             return .permissionPill
+        }
+
+        if CatSettings.shared.coatTheme == .customTuxedo {
+            guard DeskCatArtwork.containsInk(p,pose:physics.customDisplayedPose) else { return .none }
+            if DeskCatArtwork.headRect(physics.customDisplayedPose).insetBy(dx:-3,dy:-3).contains(p) { return .head }
+            return .body
         }
 
         let cx = CatPhysics.seatAnchor.x + physics.bodyShiftX.value
@@ -90,11 +97,15 @@ enum CatRenderer {
         let seatX = CatPhysics.seatAnchor.x + physics.bodyShiftX.value
         let seatY = CatPhysics.seatAnchor.y
 
-        // 1. Mini White Mouse (left of keyboard)
-        drawMouse(in: ctx, physics: physics, theme: settings.keyboardTheme)
-
-        // 2. Mini Angled 65% Mechanical Keyboard + Dynamic Keycap Glow
-        drawKeyboard(in: ctx, physics: physics, theme: settings.keyboardTheme, eyeTheme: settings.eyeTheme)
+        if coat == .customTuxedo {
+            drawCustomCat(in:ctx,physics:physics)
+            if settings.showKeyBadges { drawFloatingKeycaps(in:ctx,physics:physics) }
+            // Permission status/actions stay in the menu bar; no banner over the desktop.
+            ctx.restoreGState()
+            return
+        }
+        drawMouse(in:ctx,physics:physics,theme:settings.keyboardTheme)
+        drawKeyboard(in:ctx,physics:physics,theme:settings.keyboardTheme,eyeTheme:settings.eyeTheme)
 
         // 3. Cat Tail (behind body)
         drawTail(in: ctx, seatX: seatX, seatY: seatY, physics: physics, coat: coat)
@@ -1145,6 +1156,7 @@ enum CatRenderer {
     // MARK: - Floating Mechanical Keycap Popups
 
     private static func drawFloatingKeycaps(in ctx: CGContext, physics: CatPhysics) {
+        let desk=CatSettings.shared.coatTheme == .customTuxedo
         for badge in physics.floatingKeycaps {
             let progress = badge.age / badge.lifetime
             // Spring pop-in scale (starts crisp and readable immediately!)
@@ -1162,7 +1174,7 @@ enum CatRenderer {
             let alpha: CGFloat = progress < 0.62 ? 1.0 : max(0, 1.0 - (progress - 0.62) / 0.38)
 
             let charCount = badge.label.count
-            let w: CGFloat = charCount <= 1 ? 23 : (charCount == 2 ? 30 : 38)
+            let w: CGFloat = max(23,min(90,CGFloat(charCount)*7.0+14))
             let h: CGFloat = 22
 
             ctx.saveGState()
@@ -1174,28 +1186,28 @@ enum CatRenderer {
             // 3D bottom keycap edge / shadow
             let baseRect = CGRect(x: -w * 0.5, y: -h * 0.5 + 2.5, width: w, height: h)
             let basePath = CGPath(roundedRect: baseRect, cornerWidth: 5.5, cornerHeight: 5.5, transform: nil)
-            ctx.setFillColor(NSColor(calibratedRed: 0.15, green: 0.15, blue: 0.17, alpha: 0.95).cgColor)
+            ctx.setFillColor((desk ? rgb(0xCDB38E) : NSColor(calibratedRed:0.15,green:0.15,blue:0.17,alpha:0.95)).cgColor)
             ctx.addPath(basePath)
             ctx.fillPath()
 
             // Crisp white mechanical keycap top face
             let faceRect = CGRect(x: -w * 0.5, y: -h * 0.5, width: w, height: h)
             let facePath = CGPath(roundedRect: faceRect, cornerWidth: 5.2, cornerHeight: 5.2, transform: nil)
-            ctx.setFillColor(NSColor(calibratedRed: 0.975, green: 0.972, blue: 0.952, alpha: 1.0).cgColor)
+            ctx.setFillColor((desk ? rgb(0xFFF8E9) : NSColor(calibratedRed:0.975,green:0.972,blue:0.952,alpha:1)).cgColor)
             ctx.addPath(facePath)
             ctx.fillPath()
 
-            ctx.setStrokeColor(NSColor(calibratedRed: 0.16, green: 0.16, blue: 0.18, alpha: 1.0).cgColor)
+            ctx.setStrokeColor((desk ? rgb(0x786044) : NSColor(calibratedRed:0.16,green:0.16,blue:0.18,alpha:1)).cgColor)
             ctx.setLineWidth(1.45)
             ctx.addPath(facePath)
             ctx.strokePath()
 
             // Centered bold key label
             let fontSize: CGFloat = charCount <= 1 ? 11.5 : 10.0
-            let font = NSFont.systemFont(ofSize: fontSize, weight: .bold)
+            let font = NSFont.systemFont(ofSize: fontSize, weight:desk ? .medium : .bold)
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: font,
-                .foregroundColor: NSColor(calibratedRed: 0.12, green: 0.12, blue: 0.14, alpha: 1.0)
+                .foregroundColor: desk ? rgb(0x594A36) : NSColor(calibratedRed:0.12,green:0.12,blue:0.14,alpha:1)
             ]
             let attrStr = NSAttributedString(string: badge.label, attributes: attrs)
             let strSize = attrStr.size()
@@ -1339,5 +1351,350 @@ enum CatRenderer {
             )
             ctx.restoreGState()
         }
+    }
+    // MARK: - Complete original poses with continuous deformation, no cut-and-paste anatomy
+    private static func drawCustomCat(in ctx: CGContext, physics p: CatPhysics) {
+        let id=p.customDisplayedPose
+        guard let image=DeskCatArtwork.animatedImage(id,physics:p) else { return }
+        let rect=DeskCatArtwork.rect
+        ctx.saveGState();ctx.setAlpha(p.customPoseOpacity);ctx.interpolationQuality = .high
+        ctx.translateBy(x:rect.minX,y:rect.maxY);ctx.scaleBy(x:1,y:-1)
+        ctx.draw(image,in:CGRect(origin:.zero,size:rect.size))
+        ctx.restoreGState()
+    }
+}
+
+/// The exact approved masters are packaged with the app. Crop rectangles come from their manifest.
+/// Images are decoded and cropped once; the 60 FPS render loop only transforms cached CGImages.
+enum CustomCatArtwork {
+    static let images:[String:CGImage] = {
+        let folder:URL
+        if let path=ProcessInfo.processInfo.environment["KUROCAT_ARTWORK_DIR"] {
+            folder=URL(fileURLWithPath:path)
+        } else {
+            folder=Bundle.main.resourceURL!.appendingPathComponent("CustomCat")
+        }
+        guard let data=try? Data(contentsOf:folder.appendingPathComponent("manifest.json")),
+              let manifest=try? JSONSerialization.jsonObject(with:data) as? [String:Any],
+              let atlases=manifest["atlases"] as? [[String:Any]] else { return [:] }
+        var result:[String:CGImage]=[:]
+        for atlas in atlases {
+            guard let filename=atlas["file"] as? String,
+                  let frames=atlas["frames"] as? [[String:Any]],
+                  let source=NSImage(contentsOf:folder.appendingPathComponent(filename)),
+                  let image=source.cgImage(forProposedRect:nil,context:nil,hints:nil) else { continue }
+            for frame in frames {
+                guard let id=frame["id"] as? String,
+                      let cell=frame["extraction_rect_xywh"] as? [Int],cell.count == 4,
+                      let box=frame["content_bbox_in_frame_alpha_gt_32"] as? [Int],box.count == 4 else { continue }
+                // Keep the original antialiasing and a small transparent margin around the ink.
+                let rect=CGRect(x:cell[0]+box[0]-3,y:cell[1]+box[1]-3,
+                                width:box[2]-box[0]+6,height:box[3]-box[1]+6)
+                result[id]=image.cropping(to:rect)
+            }
+        }
+        return result
+    }()
+}
+
+
+extension CustomCatArtwork {
+    static func poseRect(_ id:String) -> CGRect {
+        guard let image=images[id] else { return .zero }
+        let scale:CGFloat = id == "belly_hug" ? 0.50 : 0.54
+        let width=CGFloat(image.width)*scale,height=CGFloat(image.height)*scale
+        return CGRect(x:184-width/2,y:258-height,width:width,height:height)
+    }
+
+    static func headRect(_ id:String) -> CGRect {
+        switch id {
+        case "rest_side": return CGRect(x:0.56,y:0.03,width:0.42,height:0.82)
+        case "belly_hug": return CGRect(x:0.32,y:0,width:0.64,height:0.42)
+        case "groom_leg": return CGRect(x:0.17,y:0.25,width:0.52,height:0.47)
+        default: return CGRect(x:0.19,y:0,width:0.63,height:0.45)
+        }
+    }
+
+    private static let ciContext=CIContext(options:[.cacheIntermediates:false])
+    private static let ciImages=images.mapValues { CIImage(cgImage:$0) }
+    // Only the eye patches change for blinking. Use the supplied eyelid ink, not a second head.
+    private static let closedSit:CIImage? = {
+        guard let original=images["sit_base"],let lids=images["eyes_closed_overlay"],
+              let context=CGContext(data:nil,width:original.width,height:original.height,
+                                    bitsPerComponent:8,bytesPerRow:original.width*4,
+                                    space:CGColorSpaceCreateDeviceRGB(),
+                                    bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.draw(original,in:CGRect(x:0,y:0,width:original.width,height:original.height))
+        context.translateBy(x:0,y:CGFloat(original.height));context.scaleBy(x:1,y:-1)
+        for (i,x) in [CGFloat(77.5),CGFloat(131.5)].enumerated() {
+            let color=i == 0 ? NSColor(calibratedRed:31/255.0,green:27/255.0,blue:25/255.0,alpha:1)
+                             : NSColor(calibratedRed:34/255.0,green:30/255.0,blue:28/255.0,alpha:1)
+            context.setFillColor(color.cgColor)
+            context.fillEllipse(in:CGRect(x:x-14,y:67,width:28,height:27))
+            guard let lid=lids.cropping(to:CGRect(x:i*lids.width/2,y:0,width:lids.width/2,height:lids.height)) else { continue }
+            context.saveGState();context.translateBy(x:x-13,y:86);context.scaleBy(x:1,y:-1)
+            context.draw(lid,in:CGRect(x:0,y:0,width:26,height:7.5));context.restoreGState()
+        }
+        return context.makeImage().map { CIImage(cgImage:$0) }
+    }()
+    // A smooth displacement field maps every pixel of the SAME full-body image.
+    // Its Gaussian falloff carries joints/neck/markings together and fixes the contact paws.
+    private static let motionKernel=CIWarpKernel(source:"""
+        kernel vec2 connectedMotion(vec2 size, vec4 motion, vec4 detail, float pose) {
+            vec2 pixel=destCoord();
+            vec2 uv=vec2(pixel.x/size.x,1.0-pixel.y/size.y);
+            vec2 d=vec2(0.0);
+            vec2 chest=(uv-vec2(0.5,0.64))/vec2(0.32,0.24);
+            float breathe=exp(-dot(chest,chest));
+            d.y += motion.x*breathe;
+            d.x += motion.x*(uv.x-0.5)*breathe*0.65;
+            if (pose < 0.5) {
+                float upper=1.0-smoothstep(0.28,0.67,uv.y);
+                d.x += motion.y*upper;
+                vec2 l=(uv-vec2(0.35,0.92))/vec2(0.09,0.12);
+                vec2 r=(uv-vec2(0.55,0.92))/vec2(0.09,0.12);
+                d.y += motion.z*exp(-dot(l,l))+motion.w*exp(-dot(r,r));
+
+            }
+            if (pose > 1.5 && pose < 2.5) {
+                vec2 l=(uv-vec2(0.32,0.39))/vec2(0.16,0.15);
+                vec2 r=(uv-vec2(0.73,0.40))/vec2(0.15,0.15);
+                d.x += detail.y*(exp(-dot(l,l))-exp(-dot(r,r)));
+            }
+            if (pose > 2.5) {
+                vec2 paw=(uv-vec2(0.24,0.17))/vec2(0.25,0.22);
+                float leg=exp(-dot(paw,paw));
+                d.x += detail.y*leg;
+                d.y += detail.z*leg;
+            }
+            vec2 tail=(uv-vec2(0.79,0.91))/vec2(0.20,0.075);
+            d.x += detail.w*exp(-dot(tail,tail));
+            return pixel+vec2(d.x,-d.y);
+        }
+        """)
+
+    static func animatedImage(_ id:String,physics p:CatPhysics) -> CGImage? {
+        guard let original=images[id],let open=ciImages[id],let kernel=motionKernel else { return images[id] }
+        let input = id == "sit_base" && p.effectiveEyeClosure > 0.55 ? (closedSit ?? open) : open
+        let scale:CGFloat = id == "belly_hug" ? 0.50 : 0.54
+        let t=p.time
+        let pose:CGFloat = id == "sit_base" ? 0 : (id == "rest_side" ? 1 : (id == "belly_hug" ? 2 : 3))
+        // At desktop size all offsets remain below three points, with no long reaching arms.
+        let breath=sin(t*(pose == 1 ? 1.65 : 2.0))*(pose == 1 ? 0.45 : 0.7)/scale
+        let left=p.leftPawTyping ? max(-2.5,min(2.5,(235-p.leftPaw.point.y)*0.14))/scale : 0
+        let right=p.rightPawTyping ? max(-2.5,min(2.5,(235-p.rightPaw.point.y)*0.14))/scale : 0
+        let motion=CIVector(x:breath,y:max(-1,min(1,p.headYaw.value))*1.5/scale,z:left,w:right)
+        let detail=CIVector(x:min(0.97,p.effectiveEyeClosure),
+                            y:sin(t*2.5)*(pose == 3 ? 2.0 : 0.6)/scale,
+                            z:cos(t*2.5)*0.8/scale,w:sin(p.tailPhase)*0.8/scale)
+        let extent=input.extent
+        guard let warped=kernel.apply(extent:extent,roiCallback:{ _,rect in rect.insetBy(dx:-24,dy:-24) },
+              image:input,arguments:[CIVector(x:CGFloat(original.width),y:CGFloat(original.height)),motion,detail,pose]),
+              let output=ciContext.createCGImage(warped,from:extent) else { return original }
+        return output
+    }
+}
+
+/// Approved desk scene, with one continuous texture and rigid paw cores.
+/// Offsets use the original 512px vignette coordinates; body/head never follow the cursor.
+enum DeskCatArtwork {
+    static let rect = CGRect(x:12,y:0,width:336,height:301.875)
+    static let scale:CGFloat = 336/512
+    static func canvas(_ p:CGPoint)->CGPoint {
+        CGPoint(x:rect.minX+p.x*scale,y:rect.minY+(p.y-40)*scale)
+    }
+    static let eyeOrigin = canvas(CGPoint(x:280,y:175))
+    static let sceneIDs = ["sit_base","wave","rest_side","belly_hug","groom_leg","observe"]
+    static let images:[String:CGImage] = {
+        let folder:URL
+        if let path=ProcessInfo.processInfo.environment["KUROCAT_ARTWORK_DIR"] { folder=URL(fileURLWithPath:path) }
+        else { folder=Bundle.main.resourceURL!.appendingPathComponent("CustomCat") }
+        guard let src=NSImage(contentsOf:folder.appendingPathComponent("desk-minimal.png")),
+              let full=src.cgImage(forProposedRect:nil,context:nil,hints:nil) else { return [:] }
+        var result:[String:CGImage]=[:]
+        for (i,id) in sceneIDs.enumerated() {
+            result[id]=full.cropping(to:CGRect(x:(i%3)*512,y:(i/3)*512+40,width:512,height:460))
+        }
+        return result
+    }()
+    // Transparent desktop area must remain click-through, even inside the sprite canvas.
+    private static let alphaMasks:[String:[UInt8]] = images.mapValues { image in
+        let c=CGContext(data:nil,width:image.width,height:image.height,bitsPerComponent:8,
+                        bytesPerRow:image.width*4,space:CGColorSpaceCreateDeviceRGB(),
+                        bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue)!
+        c.draw(image,in:CGRect(x:0,y:0,width:image.width,height:image.height))
+        let bytes=c.data!.assumingMemoryBound(to:UInt8.self)
+        return (0..<(image.width*image.height)).map { bytes[$0*4+3] }
+    }
+    static func containsInk(_ point:CGPoint,pose:String)->Bool {
+        guard rect.contains(point),let image=images[pose],let mask=alphaMasks[pose] else { return false }
+        let x=Int((point.x-rect.minX)/rect.width*CGFloat(image.width))
+        let y=Int((point.y-rect.minY)/rect.height*CGFloat(image.height))
+        guard x>=0 && x<image.width && y>=0 && y<image.height else { return false }
+        return mask[y*image.width+x]>48
+    }
+    static func keyPoint(_ key:PhysicalKey)->CGPoint {
+        let uv=KeyboardLayout.lookup[key.visualKey]?.normalizedCenter ?? CGPoint(x:0.5,y:0.5)
+        return canvas(CGPoint(x:160+uv.x*144,y:360+uv.y*31))
+    }
+    static func headRect(_ id:String)->CGRect {
+        let b:CGRect
+        switch id {
+        case "rest_side": b=CGRect(x:244,y:182,width:184,height:195)
+        case "belly_hug": b=CGRect(x:233,y:64,width:184,height:178)
+        case "groom_leg": b=CGRect(x:122,y:201,width:167,height:132)
+        case "wave": b=CGRect(x:179,y:78,width:161,height:175)
+        case "observe": b=CGRect(x:174,y:65,width:184,height:176)
+        default: b=CGRect(x:202,y:88,width:155,height:157)
+        }
+        return CGRect(origin:canvas(b.origin),size:CGSize(width:b.width*scale,height:b.height*scale))
+    }
+    private static let context=CIContext(options:[.cacheIntermediates:false])
+    private static let sources=images.mapValues { CIImage(cgImage:$0) }
+    private static let kernel=CIWarpKernel(source:"""
+    kernel vec2 deskRig(vec4 motion, vec4 detail, vec4 eyes, float scene, float t) {
+        vec2 p=destCoord(); float x=p.x,y=500.0-p.y;
+        vec2 d=vec2(0.0);
+        if (scene < 0.5) {
+            float wl=smoothstep(165.0,183.0,x)*(1.0-smoothstep(240.0,257.0,x))*smoothstep(280.0,320.0,y)*(1.0-smoothstep(366.0,382.0,y));
+            float wm=smoothstep(302.0,325.0,x)*(1.0-smoothstep(389.0,407.0,x))*smoothstep(282.0,325.0,y)*(1.0-smoothstep(405.0,424.0,y));
+            float wr=smoothstep(307.0,326.0,x)*(1.0-smoothstep(375.0,390.0,x))*smoothstep(290.0,321.0,y)*(1.0-smoothstep(366.0,380.0,y));
+            d=vec2(motion.x*wl,motion.y*wl);
+        }
+        if (scene > 0.5 && scene < 1.5) {
+            vec2 q=(vec2(x,y)-vec2(147.0,211.0))/vec2(38.0,42.0);
+            d.x+=sin(t*2.5)*1.1*(1.0-smoothstep(0.75,1.0,length(q)));
+        }
+        if (scene > 1.5 && scene < 4.5) {
+            vec2 center=scene<2.5 ? vec2(210.0,300.0) : (scene<3.5 ? vec2(252.0,277.0) : vec2(285.0,320.0));
+            vec2 q=(vec2(x,y)-center)/vec2(65.0,42.0);
+            d.y+=sin(t*1.7)*0.55*exp(-dot(q,q));
+        }
+        if (scene > 0.5 && eyes.x > 0.0) {
+            vec2 q=(vec2(x,y)-eyes.xy)/vec2(12.0,11.0);
+            float w=1.0-smoothstep(0.69,1.0,length(q));
+            d+=detail.xy*w;
+        }
+        if (scene > 0.5 && eyes.z > 0.0) {
+            vec2 q=(vec2(x,y)-eyes.zw)/vec2(12.0,11.0);
+            float w=1.0-smoothstep(0.69,1.0,length(q));
+            d+=detail.xy*w;
+        }
+        return vec2(p.x-d.x,p.y+d.y);
+    }
+    """)
+    private static func bitmapContext()->CGContext {
+        CGContext(data:nil,width:512,height:460,bitsPerComponent:8,bytesPerRow:512*4,
+                  space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue)!
+    }
+    private static func drawImage(_ image:CGImage,in c:CGContext,rect:CGRect) {
+        c.saveGState();c.translateBy(x:rect.minX,y:rect.maxY);c.scaleBy(x:1,y:-1)
+        c.draw(image,in:CGRect(origin:.zero,size:rect.size));c.restoreGState()
+    }
+    private static let workBackground:CIImage? = {
+        guard images["sit_base"] != nil else { return nil }
+        let folder=ProcessInfo.processInfo.environment["KUROCAT_ARTWORK_DIR"].map { URL(fileURLWithPath:$0) }
+            ?? Bundle.main.resourceURL!.appendingPathComponent("CustomCat")
+        guard let src=NSImage(contentsOf:folder.appendingPathComponent("desk-work-clean.png")),
+              let full=src.cgImage(forProposedRect:nil,context:nil,hints:nil),
+              let clean=full.cropping(to:CGRect(x:0,y:40,width:512,height:460)) else { return nil }
+        return CIImage(cgImage:clean)
+    }()
+    private static let mouseLimb:CIImage? = {
+        guard let original=images["sit_base"] else { return nil }
+        let c=bitmapContext();c.translateBy(x:0,y:460);c.scaleBy(x:1,y:-1)
+        c.translateBy(x:0,y:-40)
+        let path=CGMutablePath()
+        path.move(to:CGPoint(x:330,y:278))
+        path.addCurve(to:CGPoint(x:376,y:337),control1:CGPoint(x:361,y:282),control2:CGPoint(x:380,y:310))
+        path.addCurve(to:CGPoint(x:371,y:361),control1:CGPoint(x:380,y:348),control2:CGPoint(x:379,y:356))
+        path.addCurve(to:CGPoint(x:390,y:389),control1:CGPoint(x:382,y:364),control2:CGPoint(x:389,y:378))
+        path.addCurve(to:CGPoint(x:376,y:405),control1:CGPoint(x:393,y:400),control2:CGPoint(x:387,y:405))
+        path.addCurve(to:CGPoint(x:332,y:391),control1:CGPoint(x:351,y:407),control2:CGPoint(x:332,y:405))
+        path.addCurve(to:CGPoint(x:337,y:363),control1:CGPoint(x:328,y:379),control2:CGPoint(x:330,y:370))
+        path.addCurve(to:CGPoint(x:320,y:346),control1:CGPoint(x:325,y:365),control2:CGPoint(x:319,y:358))
+        path.addCurve(to:CGPoint(x:330,y:278),control1:CGPoint(x:318,y:321),control2:CGPoint(x:326,y:293))
+        path.closeSubpath();c.addPath(path);c.clip()
+        drawImage(original,in:c,rect:CGRect(x:0,y:40,width:512,height:460))
+        return c.makeImage().map { CIImage(cgImage:$0) }
+    }()
+    private static let limbKernel=CIWarpKernel(source:"""
+        kernel vec2 moveMouseLimb(vec2 offset,float click) {
+            vec2 p=destCoord();float y=500.0-p.y;
+            float follow=smoothstep(278.0,315.0,y);
+            float press=smoothstep(300.0,322.0,y)*(1.0-smoothstep(365.0,380.0,y));
+            return vec2(p.x-offset.x*follow,p.y+offset.y*follow+click*press);
+        }
+        """)
+    private static let pupils:[CGImage] = {
+        guard let source=images["sit_base"] else { return [] }
+        return [CGFloat(249),CGFloat(300)].compactMap { x in
+            guard let patch=source.cropping(to:CGRect(x:x,y:125,width:13,height:18)) else { return nil }
+            let c=CGContext(data:nil,width:13,height:18,bitsPerComponent:8,bytesPerRow:52,
+                            space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue)!
+            c.addEllipse(in:CGRect(x:0.7,y:0.6,width:11.6,height:16.4));c.clip()
+            c.draw(patch,in:CGRect(x:0,y:0,width:13,height:18))
+            return c.makeImage()
+        }
+    }()
+    private static func drawTrackedEyes(in c:CGContext,physics p:CatPhysics) {
+        guard pupils.count==2 else { return }
+        let dx=max(-1,min(1,p.eyeGaze.point.x))*4.4
+        let dy=max(-1,min(1,p.eyeGaze.point.y))*2.6
+        for (i,x) in [CGFloat(253),CGFloat(308)].enumerated() {
+            c.saveGState()
+            c.addEllipse(in:CGRect(x:x-11.3,y:124.7,width:22.6,height:20.6));c.clip()
+            let colors=[NSColor(calibratedRed:0.80,green:0.78,blue:0.28,alpha:1).cgColor,
+                        NSColor(calibratedRed:0.68,green:0.66,blue:0.20,alpha:1).cgColor] as CFArray
+            let gradient=CGGradient(colorsSpace:CGColorSpaceCreateDeviceRGB(),colors:colors,locations:[0,1])!
+            c.drawRadialGradient(gradient,startCenter:CGPoint(x:x-3,y:132),startRadius:0,
+                                 endCenter:CGPoint(x:x,y:135),endRadius:14,options:[.drawsBeforeStartLocation,.drawsAfterEndLocation])
+            drawImage(pupils[i],in:c,rect:CGRect(x:x+dx-6.5,y:135+dy-9,width:13,height:18))
+            c.restoreGState()
+        }
+    }
+    static func animatedImage(_ id:String,physics p:CatPhysics)->CGImage? {
+        guard let originalSource=sources[id],let kernel else { return images[id] }
+        let source = id == "sit_base" ? (workBackground ?? originalSource) : originalSource
+        let index=sceneIDs.firstIndex(of:id) ?? 0
+        let eyes:CIVector
+        switch id {
+        case "sit_base": eyes=CIVector(x:253,y:175,z:308,w:175)
+        case "wave": eyes=CIVector(x:219,y:157,z:263,w:178)
+        case "belly_hug": eyes=CIVector(x:309,y:137,z:358,w:169)
+        case "observe": eyes=CIVector(x:305,y:161,z:0,w:0)
+        default: eyes=CIVector(x:0,y:0,z:0,w:0)
+        }
+        let motion=CIVector(x:max(-6.5,min(6.5,p.deskPaw.point.x)),y:max(-5,min(1,p.deskPaw.point.y)),
+                            z:max(-14,min(14,p.deskMouse.point.x)),w:max(-7,min(7,p.deskMouse.point.y)))
+        let detail=CIVector(x:max(-1,min(1,p.eyeGaze.point.x))*2.3,
+                            y:max(-1,min(1,p.eyeGaze.point.y))*1.7,
+                            z:min(1,max(p.mousePressLeft.value,p.mousePressRight.value))*1.6,w:0)
+        guard let result=kernel.apply(extent:source.extent,roiCallback:{_,r in r.insetBy(dx:-20,dy:-20)},
+              image:source,arguments:[motion,detail,eyes,CGFloat(index),p.time]),
+              let output=context.createCGImage(result,from:source.extent) else { return images[id] }
+        guard id == "sit_base" else { return output }
+        let cg=bitmapContext()
+        cg.draw(output,in:CGRect(x:0,y:0,width:512,height:460))
+        if let limb=mouseLimb,let limbKernel,
+           let moved=limbKernel.apply(extent:limb.extent,roiCallback:{_,r in r.insetBy(dx:-24,dy:-16)},
+                                      image:limb,arguments:[CIVector(x:motion.z,y:motion.w),detail.z]),
+           let arm=context.createCGImage(moved,from:limb.extent) {
+            cg.draw(arm,in:CGRect(x:0,y:0,width:512,height:460))
+        }
+        cg.translateBy(x:0,y:460);cg.scaleBy(x:1,y:-1)
+        if p.effectiveEyeClosure<=0.60 {
+            drawTrackedEyes(in:cg,physics:p)
+            return cg.makeImage()
+        }
+        // Eyelids remain local overlays; no head or neck transformation.
+        for x:CGFloat in [253,308] {
+            cg.setFillColor(NSColor(calibratedRed:0.125,green:0.112,blue:0.102,alpha:1).cgColor)
+            cg.fillEllipse(in:CGRect(x:x-13,y:123,width:26,height:24))
+            cg.setStrokeColor(NSColor(calibratedRed:0.67,green:0.66,blue:0.27,alpha:1).cgColor)
+            cg.setLineWidth(1.8);cg.setLineCap(.round)
+            cg.move(to:CGPoint(x:x-9,y:134));cg.addQuadCurve(to:CGPoint(x:x+9,y:134),control:CGPoint(x:x,y:140));cg.strokePath()
+        }
+        return cg.makeImage()
     }
 }

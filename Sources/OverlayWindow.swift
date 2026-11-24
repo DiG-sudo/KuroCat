@@ -4,17 +4,33 @@ import AppKit
 final class CatCanvasView: NSView {
     let physics = CatPhysics()
     var onRequestPermission: (() -> Void)?
-    var onRightClickMenu: ((NSEvent) -> Void)?
+    var onRightClickMenu: ((NSEvent) -> NSMenu?)?
 
     private var lastHoverCanvasPt: CGPoint?
     private var isDragging = false
     private var dragStartScreenPt: CGPoint = .zero
     private var dragStartWindowOrigin: CGPoint = .zero
     private var isShowingOpenHand = false
+    private(set) var isPresentingMenu = false
+
+    // The nested menu loop owns the pointer until the menu closes.
+    func setMenuTracking(_ tracking: Bool) {
+        isPresentingMenu = tracking
+        lastHoverCanvasPt = nil
+        if tracking {
+            isDragging = false
+            resetCursorIfNeeded()
+            NSCursor.arrow.set()
+            window?.ignoresMouseEvents = false
+        } else {
+            updateHoverAndClickThrough()
+        }
+    }
 
     override var isFlipped: Bool { true }
     override var isOpaque: Bool { false }
     override var acceptsFirstResponder: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
@@ -43,7 +59,7 @@ final class CatCanvasView: NSView {
 
     /// Called on every 60fps tick to handle smart click-through AND petting strokes.
     func updateHoverAndClickThrough() {
-        guard let win = window else { return }
+        guard !isPresentingMenu, let win = window else { return }
         let screenPt = NSEvent.mouseLocation
         let showPill = InputEngine.shared.status == .needsPermission
 
@@ -64,7 +80,7 @@ final class CatCanvasView: NSView {
         let zone = CatRenderer.hitTest(point: pt, physics: physics, showPermissionPill: showPill)
 
         // Petting works in both Smart Mode and Full Click-Through Mode!
-        if zone == .head || zone == .body {
+        if (zone == .head || zone == .body) && !physics.isManualCustomAction {
             if let prev = lastHoverCanvasPt {
                 let delta = hypot(pt.x - prev.x, pt.y - prev.y)
                 if delta > 1.2 && delta < 80 {
@@ -109,7 +125,11 @@ final class CatCanvasView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        guard let win = window else { return }
+        if event.modifierFlags.contains(.control) {
+            rightMouseDown(with:event)
+            return
+        }
+        guard !isPresentingMenu, let win = window else { return }
         let screenPt = NSEvent.mouseLocation
         let showPill = InputEngine.shared.status == .needsPermission
 
@@ -124,6 +144,7 @@ final class CatCanvasView: NSView {
         isDragging = true
         dragStartScreenPt = screenPt
         dragStartWindowOrigin = win.frame.origin
+        isShowingOpenHand = false
         NSCursor.closedHand.set()
     }
 
@@ -140,14 +161,19 @@ final class CatCanvasView: NSView {
     override func mouseUp(with event: NSEvent) {
         guard isDragging, let win = window else { return }
         isDragging = false
-        NSCursor.openHand.set()
-        // Save position
-        UserDefaults.standard.set(Double(win.frame.origin.x), forKey: "KuroCat.PosX")
-        UserDefaults.standard.set(Double(win.frame.origin.y), forKey: "KuroCat.PosY")
+        NSCursor.arrow.set()
+        (win as? OverlayWindow)?.keepOnScreen()
+        updateHoverAndClickThrough()
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        onRightClickMenu?(event)
     }
 
     override func rightMouseDown(with event: NSEvent) {
-        onRightClickMenu?(event)
+        guard !isPresentingMenu else { return }
+        // AppKit owns context-menu positioning, activation and multi-screen input.
+        super.rightMouseDown(with:event)
     }
 }
 
@@ -195,7 +221,8 @@ final class OverlayWindow: NSPanel {
         }
     }
 
-    func applyScale(_ newScale: CGFloat) {
+    func applyScale(_ requestedScale: CGFloat) {
+        let newScale = requestedScale.isFinite ? min(1.5, max(0.65, requestedScale)) : 1.0
         CatSettings.shared.scale = newScale
         let oldFrame = frame
         let newSize = CGSize(
@@ -207,16 +234,43 @@ final class OverlayWindow: NSPanel {
             x: oldFrame.midX - newSize.width * 0.5,
             y: oldFrame.minY
         )
-        setFrame(CGRect(origin: newOrigin, size: newSize), display: true)
-        UserDefaults.standard.set(Double(newOrigin.x), forKey: "KuroCat.PosX")
-        UserDefaults.standard.set(Double(newOrigin.y), forKey: "KuroCat.PosY")
+        setFrame(Self.fittedFrame(CGRect(origin: newOrigin, size: newSize),
+                                 visibleFrames: NSScreen.screens.map(\.visibleFrame)), display: true)
+        savePosition()
+        catView.updateHoverAndClickThrough()
     }
 
     func resetPosition() {
         let origin = OverlayWindow.defaultOrigin(for: frame.size)
         setFrameOrigin(origin)
-        UserDefaults.standard.set(Double(origin.x), forKey: "KuroCat.PosX")
-        UserDefaults.standard.set(Double(origin.y), forKey: "KuroCat.PosY")
+        keepOnScreen()
+    }
+
+    func keepOnScreen() {
+        setFrame(Self.fittedFrame(frame, visibleFrames: NSScreen.screens.map(\.visibleFrame)), display: true)
+        savePosition()
+    }
+
+    private func savePosition() {
+        UserDefaults.standard.set(Double(frame.minX), forKey: "KuroCat.PosX")
+        UserDefaults.standard.set(Double(frame.minY), forKey: "KuroCat.PosY")
+    }
+
+    // Prefer the display containing most of the pet, including negative origins.
+    static func fittedFrame(_ frame: CGRect, visibleFrames: [CGRect]) -> CGRect {
+        guard !visibleFrames.isEmpty else { return frame }
+        let screen = visibleFrames.max { a, b in
+            func score(_ r: CGRect) -> CGFloat {
+                let overlap = r.intersection(frame)
+                if !overlap.isNull { return overlap.width * overlap.height }
+                return -hypot(r.midX-frame.midX, r.midY-frame.midY)
+            }
+            return score(a) < score(b)
+        }!
+        var result = frame
+        result.origin.x = min(max(frame.minX, screen.minX), max(screen.minX, screen.maxX-frame.width))
+        result.origin.y = min(max(frame.minY, screen.minY), max(screen.minY, screen.maxY-frame.height))
+        return result
     }
 
     private static func initialOrigin(for size: CGSize) -> CGPoint {
@@ -224,11 +278,9 @@ final class OverlayWindow: NSPanel {
         if d.object(forKey: "KuroCat.PosX") != nil && d.object(forKey: "KuroCat.PosY") != nil {
             let x = CGFloat(d.double(forKey: "KuroCat.PosX"))
             let y = CGFloat(d.double(forKey: "KuroCat.PosY"))
-            let saved = CGPoint(x: x, y: y)
-            // Ensure saved origin is still on a connected display
-            let rect = CGRect(origin: saved, size: size)
-            if NSScreen.screens.contains(where: { $0.frame.intersects(rect) }) {
-                return saved
+            if x.isFinite && y.isFinite {
+                return fittedFrame(CGRect(origin: CGPoint(x:x,y:y), size:size),
+                                   visibleFrames: NSScreen.screens.map(\.visibleFrame)).origin
             }
         }
         return defaultOrigin(for: size)

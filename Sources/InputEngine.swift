@@ -44,6 +44,13 @@ final class InputEngine {
     private var eventTap: CFMachPort?
     private var eventTapRunLoopSource: CFRunLoopSource?
     private var localMonitor: Any?
+    private var globalMonitor: Any?
+    private var lastRepeatStamps: [PhysicalKey:UInt64] = [:]
+    private(set) var receivedKeyDownCount = 0
+    private(set) var receivedModifierCount = 0
+    private(set) var deliveredKeyDownCount = 0
+    private(set) var syntheticTestCodes = Set<UInt16>()
+    private var modifierStamps: [PhysicalKey:UInt64] = [:]
     private var permissionCheckTimer: Timer?
 
     private(set) var isHIDActive = false
@@ -56,6 +63,7 @@ final class InputEngine {
     var onStatusChanged: ((InputEngineStatus) -> Void)?
 
     private var lastModifierFlags: CGEventFlags = []
+    private var recentDownTimes: [PhysicalKey:CFTimeInterval] = [:]
 
     var status: InputEngineStatus {
         guard hasKeyboardGlobalPermission else { return .needsPermission }
@@ -90,6 +98,7 @@ final class InputEngine {
 
     func start() {
         startLocalFallbackMonitor()
+        startGlobalFallbackMonitor()
         tryStartHID()
         tryStartEventTap()
         notifyStatus()
@@ -116,10 +125,8 @@ final class InputEngine {
         permissionCheckTimer = nil
         stopHID()
         stopEventTap()
-        if let m = localMonitor {
-            NSEvent.removeMonitor(m)
-            localMonitor = nil
-        }
+        if let m = localMonitor { NSEvent.removeMonitor(m); localMonitor=nil }
+        if let m = globalMonitor { NSEvent.removeMonitor(m); globalMonitor=nil }
     }
 
     /// Request macOS Input Monitoring permission and open System Settings directly.
@@ -183,7 +190,8 @@ final class InputEngine {
             ]
         ]
 
-        IOHIDManagerSetDeviceMatchingMultiple(manager, matches as CFArray)
+        let consumerMatch: [String:Any] = [kIOHIDDeviceUsagePageKey as String:0x0C,kIOHIDDeviceUsageKey as String:1]
+        IOHIDManagerSetDeviceMatchingMultiple(manager, (matches+[consumerMatch]) as CFArray)
 
         let context = Unmanaged.passUnretained(self).toOpaque()
         IOHIDManagerRegisterInputValueCallback(manager, { ctx, _, _, value in
@@ -192,20 +200,20 @@ final class InputEngine {
             engine.handleHIDValue(value)
         }, context)
 
-        IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
+        IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
         let openResult = IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
         if openResult == kIOReturnSuccess {
             self.hidManager = manager
             self.isHIDActive = true
         } else {
-            IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
+            IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
             self.isHIDActive = false
         }
     }
 
     private func stopHID() {
         if let manager = hidManager {
-            IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
+            IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
             IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
             hidManager = nil
         }
@@ -222,11 +230,16 @@ final class InputEngine {
 
         // Standard Keyboard / Keypad page (0x07)
         if usagePage == UInt32(kHIDPage_KeyboardOrKeypad) {
-            // Filter out HID error/rollover pseudo-usages (0x00..0x03)
-            guard usage >= 0x04 else { return }
+            // Array slots (usage 0xFFFFFFFF) are report bookkeeping, not a
+            // physical key. IOHIDManager reports their derived key elements too.
             if let key = PhysicalKey.fromHIDUsage(usage) {
                 setKeyState(key, isDown: intVal != 0, fromHID: true)
             }
+            return
+        }
+
+        if usagePage == 0x0C && usage > 0 && usage <= 0xFFFF {
+            setKeyState(PhysicalKey.fromConsumerUsage(usage),isDown:intVal != 0,fromHID:true)
             return
         }
 
@@ -263,7 +276,7 @@ final class InputEngine {
             .leftMouseDown, .leftMouseUp,
             .rightMouseDown, .rightMouseUp,
             .otherMouseDown, .otherMouseUp,
-            .scrollWheel
+            .scrollWheel, CGEventType(rawValue:14)!
         ]
         for t in types {
             mask |= (1 << t.rawValue)
@@ -310,7 +323,7 @@ final class InputEngine {
         recomputeUnifiedKeys()
     }
 
-    private func handleCGEvent(type: CGEventType, event: CGEvent) {
+    func handleCGEvent(type: CGEventType, event: CGEvent) {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let tap = eventTap {
                 CGEvent.tapEnable(tap: tap, enable: true)
@@ -318,15 +331,23 @@ final class InputEngine {
             return
         }
 
+        if type.rawValue == 14, let e = NSEvent(cgEvent:event), e.subtype.rawValue == 8,
+           let key = PhysicalKey.fromSystemKey((e.data1 >> 16) & 0xFFFF) {
+            let down = ((e.data1 >> 8) & 0xFF) == 0xA
+            if down && (e.data1 & 1) != 0 { recordRepeat(key,timestamp:event.timestamp) }
+            else { setKeyState(key,isDown:down,fromHID:false) }
+            return
+        }
         switch type {
         case .keyDown:
-            // Ignore OS auto-repeat events so holding W in a game doesn't spam floating keycaps!
+            receivedKeyDownCount += 1
+            // Repeat input animates/bubbles without adding another held-key state.
             let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
             let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+            if event.getIntegerValueField(.eventSourceUserData)==0x4B55524F { syntheticTestCodes.insert(keyCode) }
             if let key = PhysicalKey.fromCGKeyCode(keyCode) {
-                if !isRepeat {
-                    setKeyState(key, isDown: true, fromHID: false)
-                }
+                if isRepeat { recordRepeat(key,timestamp:event.timestamp) }
+                else { setKeyState(key,isDown:true,fromHID:false) }
             }
         case .keyUp:
             let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
@@ -334,11 +355,14 @@ final class InputEngine {
                 setKeyState(key, isDown: false, fromHID: false)
             }
         case .flagsChanged:
+            receivedModifierCount += 1
             let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
             let flags = event.flags
             if let key = PhysicalKey.fromCGKeyCode(keyCode) {
-                let isDown = isModifierKeyDown(key: key, flags: flags)
-                setKeyState(key, isDown: isDown, fromHID: false)
+                if modifierStamps[key] != event.timestamp {
+                    modifierStamps[key]=event.timestamp
+                    handleModifier(key,flags:flags)
+                }
             }
             lastModifierFlags = flags
         case .leftMouseDown:
@@ -360,65 +384,84 @@ final class InputEngine {
         }
     }
 
-    private func isModifierKeyDown(key: PhysicalKey, flags: CGEventFlags) -> Bool {
+    private func handleModifier(_ key:PhysicalKey,flags:CGEventFlags) {
+        if key == .capsLock {
+            // Caps Lock changes a latch; both on and off transitions are physical presses.
+            if !activeKeys.contains(key) && CACurrentMediaTime()-(recentDownTimes[key] ?? 0)>0.08 {
+                setKeyState(key,isDown:true,fromHID:false)
+                setKeyState(key,isDown:false,fromHID:false)
+            }
+            return
+        }
+        setKeyState(key,isDown:isModifierKeyDown(key:key,flags:flags),fromHID:false)
+    }
+
+    func isModifierKeyDown(key:PhysicalKey,flags:CGEventFlags)->Bool {
+        let device:[PhysicalKey:UInt64] = [.leftControl:1,.leftShift:2,.rightShift:4,.leftCommand:8,.rightCommand:16,.leftOption:32,.rightOption:64,.rightControl:8192]
+        if let bit=device[key],flags.rawValue & 0x207F != 0 { return flags.rawValue & bit != 0 }
+        let mask:CGEventFlags
         switch key {
-        case .leftShift, .rightShift: return flags.contains(.maskShift)
-        case .leftControl, .rightControl: return flags.contains(.maskControl)
-        case .leftOption, .rightOption: return flags.contains(.maskAlternate)
-        case .leftCommand, .rightCommand: return flags.contains(.maskCommand)
-        case .capsLock: return flags.contains(.maskAlphaShift)
+        case .leftShift,.rightShift: mask = .maskShift
+        case .leftControl,.rightControl: mask = .maskControl
+        case .leftOption,.rightOption: mask = .maskAlternate
+        case .leftCommand,.rightCommand: mask = .maskCommand
         case .fn: return flags.contains(.maskSecondaryFn)
         default: return false
         }
+        // Some synthetic events omit per-device bits; a flags change toggles that side.
+        return flags.contains(mask) && !tapPressedKeys.contains(key)
+    }
+
+    private func recordRepeat(_ key:PhysicalKey,timestamp:UInt64) {
+        // EventTap and AppKit may report the same OS repeat. Count that event once.
+        if let last=lastRepeatStamps[key],timestamp>=last,timestamp-last<2_000_000 { return }
+        lastRepeatStamps[key]=timestamp
+        lastKeyActivityTime=CACurrentMediaTime()
+        deliveredKeyDownCount += 1
+        onKeyDown?(key)
+    }
+
+    private func startGlobalFallbackMonitor() {
+        if let old=globalMonitor { NSEvent.removeMonitor(old) }
+        globalMonitor=NSEvent.addGlobalMonitorForEvents(matching:[.keyDown,.keyUp,.flagsChanged,.systemDefined]) { [weak self] event in
+            guard let self,let cg=event.cgEvent else { return }
+            self.handleCGEvent(type:cg.type,event:cg)
+        }
+    }
+
+    var diagnosticSnapshot:[String:Any] {
+        ["inputMonitoring":hasInputMonitoringPermission,"accessibility":hasAccessibilityPermission,
+         "hidActive":isHIDActive,"eventTapActive":isTapActive,
+         "tapEnabled":eventTap.map { CGEvent.tapIsEnabled(tap:$0) } ?? false,
+         "globalMonitorInstalled":globalMonitor != nil,"keyEvents":receivedKeyDownCount,
+         "modifierEvents":receivedModifierCount,"deliveredPresses":deliveredKeyDownCount,
+         "heldKeyCount":activeKeys.count,"syntheticTestCodes":syntheticTestCodes.sorted(),"status":status.rawValue]
     }
 
     // MARK: - Layer 3: Local Window Monitor (Immediate testing before permissions)
 
     private func startLocalFallbackMonitor() {
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] event in
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged, .systemDefined]) { [weak self] event in
             guard let self else { return event }
-            if !self.isHIDActive && !self.isTapActive {
-                if event.type == .keyDown && !event.isARepeat {
-                    if let key = PhysicalKey.fromCGKeyCode(event.keyCode) {
-                        self.setKeyState(key, isDown: true, fromHID: false)
-                    }
-                } else if event.type == .keyUp {
-                    if let key = PhysicalKey.fromCGKeyCode(event.keyCode) {
-                        self.setKeyState(key, isDown: false, fromHID: false)
-                    }
-                } else if event.type == .flagsChanged {
-                    if let key = PhysicalKey.fromCGKeyCode(event.keyCode) {
-                        let cgFlags = CGEventFlags(rawValue: UInt64(event.modifierFlags.rawValue))
-                        self.setKeyState(key, isDown: self.isModifierKeyDown(key: key, flags: cgFlags), fromHID: false)
-                    }
-                }
-            }
+            if let cg=event.cgEvent { self.handleCGEvent(type:cg.type,event:cg) }
             return event
         }
     }
 
     // MARK: - Unified Deduplicated State
 
-    private func setKeyState(_ key: PhysicalKey, isDown: Bool, fromHID: Bool) {
+    func setKeyState(_ key: PhysicalKey, isDown: Bool, fromHID: Bool) {
         let wasActive = activeKeys.contains(key)
 
-        if fromHID {
-            if isDown {
-                hidPressedKeys.insert(key)
-            } else {
-                hidPressedKeys.remove(key)
-                // If HID explicitly says the physical key was released, clear any lingering tap state too
-                tapPressedKeys.remove(key)
-            }
+        if isDown {
+            if fromHID { hidPressedKeys.insert(key) }
+            else { tapPressedKeys.insert(key) }
         } else {
-            if isDown {
-                tapPressedKeys.insert(key)
-            } else {
-                tapPressedKeys.remove(key)
-                if !isHIDActive {
-                    hidPressedKeys.remove(key)
-                }
-            }
+            // Either backend's key-up is authoritative. A missing HID release must not
+            // poison subsequent presses when EventTap already observed the release.
+            hidPressedKeys.remove(key)
+            tapPressedKeys.remove(key)
+            lastRepeatStamps.removeValue(forKey:key)
         }
 
         recomputeUnifiedKeys()
@@ -427,10 +470,12 @@ final class InputEngine {
         if !wasActive && isNowActive {
             let now = CACurrentMediaTime()
             lastKeyActivityTime = now
+            recentDownTimes[key] = now
             recentKeyTimes.append(now)
             incrementTodayStats()
             pressedOrder.removeAll { $0 == key }
             pressedOrder.append(key)
+            deliveredKeyDownCount += 1
             onKeyDown?(key)
         } else if wasActive && !isNowActive {
             pressedOrder.removeAll { $0 == key }

@@ -2,15 +2,53 @@ import Foundation
 import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    private var statusItem: NSStatusItem!
+    private(set) var statusItem: NSStatusItem!
     private var overlayWindow: OverlayWindow!
     private var renderTimer: Timer?
     private var lastFrameTime: CFTimeInterval = CACurrentMediaTime()
     private var isPetVisible = true
+    private var lastDiagnosticTime:CFTimeInterval = 0
+    private var trackingMenus = Set<ObjectIdentifier>()
+    private var screenObserver: NSObjectProtocol?
+    var isMenuTracking: Bool { !trackingMenus.isEmpty }
+    private(set) lazy var contextMenu: NSMenu = buildMenu()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        CatSettings.shared.coatTheme = .customTuxedo
+        CatSettings.shared.eyeTheme = .photoOlive
         NSApp.setActivationPolicy(.accessory)
 
+        setupOverlay()
+
+        // Wire dual-layer InputEngine -> CatPhysics
+        let engine = InputEngine.shared
+        // HID, EventTap and AppKit monitors all deliver on the main run loop.
+        // Apply immediately so a queued menu click cannot cancel a newly chosen pose.
+        engine.onKeyDown = { [weak self] key in
+            guard let self, self.isPetVisible, !self.isMenuTracking else { return }
+            self.overlayWindow.catView.physics.triggerKeyDown(key)
+        }
+        engine.onMouseClick = { [weak self] button, isDown in
+            guard let self, self.isPetVisible, !self.isMenuTracking else { return }
+            self.overlayWindow.catView.physics.triggerMouseClick(button: button, isDown: isDown)
+        }
+        engine.onStatusChanged = { [weak self] _ in self?.writeRuntimeDiagnostics(force:true) }
+        engine.start()
+        writeRuntimeDiagnostics(force:true)
+
+        setupStatusItem()
+        if isAutoStartEnabled() {
+            // Keep LaunchAgent path updated if user moved KuroCat.app into /Applications
+            _ = setAutoStartEnabled(true)
+        }
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in self?.overlayWindow.keepOnScreen() }
+        startRenderLoop()
+    }
+
+    // Keep window/menu setup independent from global input capture.
+    func setupOverlay() {
         overlayWindow = OverlayWindow()
         overlayWindow.orderFrontRegardless()
 
@@ -18,43 +56,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         catView.onRequestPermission = { [weak self] in
             self?.openInputMonitoringSettings()
         }
-        catView.onRightClickMenu = { [weak self] event in
-            guard let self else { return }
-            let menu = self.buildMenu()
-            NSMenu.popUpContextMenu(menu, with: event, for: self.overlayWindow.catView)
+        catView.onRightClickMenu = { [weak self] _ in
+            guard let self, !self.isMenuTracking else { return nil }
+            self.contextMenu = self.buildMenu()
+            return self.contextMenu
         }
-
-        // Wire dual-layer InputEngine -> CatPhysics
-        let engine = InputEngine.shared
-        engine.onKeyDown = { [weak self] key in
-            DispatchQueue.main.async {
-                self?.overlayWindow.catView.physics.triggerKeyDown(key)
-            }
-        }
-        engine.onMouseClick = { [weak self] button, isDown in
-            DispatchQueue.main.async {
-                self?.overlayWindow.catView.physics.triggerMouseClick(button: button, isDown: isDown)
-            }
-        }
-        engine.start()
-
-        setupStatusItem()
-        if isAutoStartEnabled() {
-            // Keep LaunchAgent path updated if user moved KuroCat.app into /Applications
-            _ = setAutoStartEnabled(true)
-        }
-        startRenderLoop()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         renderTimer?.invalidate()
+        if let observer = screenObserver { NotificationCenter.default.removeObserver(observer) }
         InputEngine.shared.flushStats()
         InputEngine.shared.stop()
     }
 
     // MARK: - 60 FPS Render Loop
 
-    private func startRenderLoop() {
+    func startRenderLoop() {
         lastFrameTime = CACurrentMediaTime()
         let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             guard let self, self.isPetVisible else { return }
@@ -63,37 +81,115 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.lastFrameTime = now
 
             let view = self.overlayWindow.catView
+            if self.isMenuTracking {
+                InputEngine.shared.pollMouse(dt: min(dt, 1.0/25.0))
+                return
+            }
             view.physics.step(dt: dt, windowFrameInScreen: self.overlayWindow.frame)
             view.updateHoverAndClickThrough()
             view.needsDisplay = true
+            self.writeRuntimeDiagnostics()
         }
         RunLoop.main.add(timer, forMode: .common)
         renderTimer = timer
     }
 
+    // Opt-in developer probe of THIS GUI process; no key labels or typed text are stored.
+    private func writeRuntimeDiagnostics(force:Bool=false) {
+        guard CommandLine.arguments.contains("--diagnostics"),let view=overlayWindow?.catView else { return }
+        let now=CACurrentMediaTime()
+        guard force || now-lastDiagnosticTime>1 else { return }
+        lastDiagnosticTime=now
+        var info=InputEngine.shared.diagnosticSnapshot
+        info["pid"]=ProcessInfo.processInfo.processIdentifier
+        info["menuTracking"]=isMenuTracking
+        info["petVisible"]=isPetVisible
+        info["windowVisible"]=overlayWindow.isVisible
+        info["bubblesEnabled"]=CatSettings.shared.showKeyBadges
+        info["bubbleCount"]=view.physics.floatingKeycaps.count
+        info["mousePaw"]=[view.physics.deskMouse.point.x,view.physics.deskMouse.point.y]
+        info["gaze"]=[view.physics.eyeGaze.point.x,view.physics.eyeGaze.point.y]
+        info["timestamp"]=Date().timeIntervalSince1970
+        let folder=FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask)[0].appendingPathComponent("KuroCat")
+        try? FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
+        if let data=try? JSONSerialization.data(withJSONObject:info,options:[.prettyPrinted,.sortedKeys]) {
+            try? data.write(to:folder.appendingPathComponent("runtime-status.json"),options:.atomic)
+        }
+    }
+
     // MARK: - Menu Bar Icon & Menu
 
-    private func setupStatusItem() {
+    func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem.button {
             button.image = makeMenuBarCatIcon()
             button.toolTip = "KuroCat 黑猫键盘桌宠"
         }
-        let menu = NSMenu()
-        menu.delegate = self
-        statusItem.menu = menu
+        statusItem.menu = buildMenu()
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
-        menu.removeAllItems()
-        for item in buildMenu().items {
-            item.menu?.removeItem(item)
-            menu.addItem(item)
+        guard !isMenuTracking else { return }
+        let engine = InputEngine.shared
+        let settings = CatSettings.shared
+        let physics = overlayWindow.catView.physics
+        func refresh(_ menu: NSMenu) {
+            for item in menu.items {
+                if item.tag == 1 {
+                    let needs = engine.status == .needsPermission
+                    item.title = "\(needs ? "⚠️" : "🟢") \(engine.status.rawValue)"
+                    item.action = needs ? #selector(openInputMonitoringSettings) : nil
+                    item.isEnabled = needs
+                } else if item.tag == 2 {
+                    item.title = "⌨️ 今日击键 \(engine.totalKeystrokesToday)  ·  KPM \(engine.currentKPM)  ·  摸猫 \(physics.totalPetSessions) 次"
+                } else if item.tag == 3 {
+                    item.isHidden = engine.status != .needsPermission
+                }
+                if item.action == #selector(toggleVisibility) {
+                    item.title = isPetVisible ? "隐藏小黑猫" : "显示小黑猫"
+                } else if item.action == #selector(toggleClickThrough) {
+                    item.state = settings.fullClickThrough ? .on : .off
+                } else if item.action == #selector(toggleFullScreenOverlay) {
+                    item.state = settings.fullScreenOverlay ? .on : .off
+                } else if item.action == #selector(toggleAutoStart) {
+                    item.state = isAutoStartEnabled() ? .on : .off
+                } else if item.action == #selector(toggleKeyBadges) {
+                    item.state = settings.showKeyBadges ? .on : .off
+                } else if item.action == #selector(togglePetInteraction) {
+                    item.state = settings.petInteraction ? .on : .off
+                } else if item.action == #selector(toggleCustomAutoActions) {
+                    item.state = settings.customAutoActions ? .on : .off
+                } else if item.action == #selector(selectScale(_:)), let value = item.representedObject as? NSNumber {
+                    item.state = abs(settings.scale-CGFloat(value.doubleValue)) < 0.05 ? .on : .off
+                } else if item.action == #selector(playCustomPose(_:)), let raw = item.representedObject as? String {
+                    item.state = physics.customAction?.rawValue == raw ? .on : .off
+                }
+                if let submenu = item.submenu { refresh(submenu) }
+            }
         }
+        refresh(menu)
     }
 
-    private func buildMenu() -> NSMenu {
+    func menuWillOpen(_ menu: NSMenu) {
+        trackingMenus.insert(ObjectIdentifier(menu))
+        overlayWindow.catView.setMenuTracking(true)
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        guard trackingMenus.remove(ObjectIdentifier(menu)) != nil else { return }
+        guard !isMenuTracking else { return }
+        lastFrameTime = CACurrentMediaTime()
+        // Release any paw held before opening the menu: the matching release may
+        // have belonged to the menu itself and was deliberately ignored.
+        overlayWindow.catView.physics.triggerMouseClick(button: 0, isDown: false)
+        overlayWindow.catView.physics.triggerMouseClick(button: 1, isDown: false)
+        overlayWindow.catView.setMenuTracking(false)
+    }
+
+    func buildMenu() -> NSMenu {
         let menu = NSMenu()
+        menu.delegate = self
+        menu.autoenablesItems = false
         let engine = InputEngine.shared
         let settings = CatSettings.shared
         let physics = overlayWindow.catView.physics
@@ -102,11 +198,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let statusPrefix = engine.status == .needsPermission ? "⚠️" : "🟢"
         let statusItem = NSMenuItem(title: "\(statusPrefix) \(engine.status.rawValue)", action: engine.status == .needsPermission ? #selector(openInputMonitoringSettings) : nil, keyEquivalent: "")
         statusItem.target = self
+        statusItem.tag = 1
+        statusItem.isEnabled = engine.status == .needsPermission
         menu.addItem(statusItem)
 
-        if engine.status == .needsPermission {
+        do {
             let grantItem = NSMenuItem(title: "🔑 前往系统设置开启「输入监控」...", action: #selector(openInputMonitoringSettings), keyEquivalent: "")
             grantItem.target = self
+            grantItem.tag = 3
+            grantItem.isHidden = engine.status != .needsPermission
             menu.addItem(grantItem)
         }
 
@@ -114,6 +214,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let statsTitle = "⌨️ 今日击键 \(engine.totalKeystrokesToday)  ·  KPM \(engine.currentKPM)  ·  摸猫 \(physics.totalPetSessions) 次"
         let statsItem = NSMenuItem(title: statsTitle, action: nil, keyEquivalent: "")
         statsItem.isEnabled = false
+        statsItem.tag = 2
         menu.addItem(statsItem)
 
         menu.addItem(.separator())
@@ -123,7 +224,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         visItem.target = self
         menu.addItem(visItem)
 
-        let clickThroughItem = NSMenuItem(title: "完全鼠标穿透 (按住 ⌥Option 可临时右键/拖动)", action: #selector(toggleClickThrough), keyEquivalent: "")
+        let clickThroughItem = NSMenuItem(title: "鼠标穿透（⌥ 临时操作）", action: #selector(toggleClickThrough), keyEquivalent: "")
         clickThroughItem.target = self
         clickThroughItem.state = settings.fullClickThrough ? .on : .off
         menu.addItem(clickThroughItem)
@@ -141,15 +242,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
 
         // Features
-        let badgesItem = NSMenuItem(title: "显示按键气泡 ([S] [W] [⇧])", action: #selector(toggleKeyBadges), keyEquivalent: "")
+        let badgesItem = NSMenuItem(title: "显示按键气泡", action: #selector(toggleKeyBadges), keyEquivalent: "")
         badgesItem.target = self
         badgesItem.state = settings.showKeyBadges ? .on : .off
         menu.addItem(badgesItem)
 
-        let footItem = NSMenuItem(title: "3键同时按「用脚按」彩蛋 🐾", action: #selector(toggleFootEgg), keyEquivalent: "")
-        footItem.target = self
-        footItem.state = settings.footEasterEgg ? .on : .off
-        menu.addItem(footItem)
 
         let petItem = NSMenuItem(title: "摸头/摸背闭眼互动", action: #selector(togglePetInteraction), keyEquivalent: "")
         petItem.target = self
@@ -178,48 +275,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         scaleParent.submenu = scaleMenu
         menu.addItem(scaleParent)
 
-        // Cat coat submenu: original skins plus approved shorthair and orange-white.
-        let coatMenu = NSMenu()
-        for coat in CatCoatTheme.allCases {
-            let item = NSMenuItem(title: coat.rawValue, action: #selector(selectCoatTheme(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = coat.rawValue
-            item.state = settings.coatTheme == coat ? .on : .off
-            coatMenu.addItem(item)
+        if settings.coatTheme == .customTuxedo {
+            let actions = NSMenu()
+            for action in CustomCatAction.allCases {
+                let item = NSMenuItem(title: action.rawValue, action: #selector(playCustomPose(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = action.rawValue
+                item.state = physics.customAction == action ? .on : .off
+                actions.addItem(item)
+            }
+            actions.addItem(.separator())
+            let automatic = NSMenuItem(title: "闲置时自动播放", action: #selector(toggleCustomAutoActions), keyEquivalent: "")
+            automatic.target = self
+            automatic.state = settings.customAutoActions ? .on : .off
+            actions.addItem(automatic)
+            let reset = NSMenuItem(title: "恢复打字互动", action: #selector(resetCustomPose), keyEquivalent: "")
+            reset.target = self
+            actions.addItem(reset)
+            let parent = NSMenuItem(title: "专属动作", action: nil, keyEquivalent: "")
+            parent.submenu = actions
+            menu.addItem(parent)
         }
-        let coatParent = NSMenuItem(title: "猫咪皮肤 🐱", action: nil, keyEquivalent: "")
-        coatParent.submenu = coatMenu
-        menu.addItem(coatParent)
-
-        // Keyboard Theme submenu
-        let kbMenu = NSMenu()
-        for theme in KeyboardTheme.allCases {
-            let item = NSMenuItem(title: theme.rawValue, action: #selector(selectKeyboardTheme(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = theme.rawValue
-            item.state = settings.keyboardTheme == theme ? .on : .off
-            kbMenu.addItem(item)
-        }
-        let kbParent = NSMenuItem(title: "键盘配色", action: nil, keyEquivalent: "")
-        kbParent.submenu = kbMenu
-        menu.addItem(kbParent)
-
-        // Eye Color submenu
-        let eyeMenu = NSMenu()
-        for eye in EyeColorTheme.allCases {
-            let item = NSMenuItem(title: eye.rawValue, action: #selector(selectEyeTheme(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = eye.rawValue
-            item.state = settings.eyeTheme == eye ? .on : .off
-            eyeMenu.addItem(item)
-        }
-        let eyeParent = NSMenuItem(title: "瞳色切换", action: nil, keyEquivalent: "")
-        eyeParent.submenu = eyeMenu
-        menu.addItem(eyeParent)
 
         menu.addItem(.separator())
 
-        let demoItem = NSMenuItem(title: "🎬 演示打字 + 摸猫动画", action: #selector(runDemoBurst), keyEquivalent: "")
+        let demoItem = NSMenuItem(title: "演示按键气泡与爪子动作", action: #selector(runDemoBurst), keyEquivalent: "")
         demoItem.target = self
         menu.addItem(demoItem)
 
@@ -246,22 +326,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         InputEngine.shared.requestPermissionsAndOpenSettings()
     }
 
+    private func showPet() {
+        isPetVisible = true
+        lastFrameTime = CACurrentMediaTime()
+        overlayWindow.keepOnScreen()
+        overlayWindow.orderFrontRegardless()
+        overlayWindow.catView.updateHoverAndClickThrough()
+        overlayWindow.catView.needsDisplay = true
+    }
+
     @objc private func toggleVisibility() {
-        isPetVisible.toggle()
         if isPetVisible {
-            overlayWindow.orderFrontRegardless()
-        } else {
+            isPetVisible = false
             overlayWindow.orderOut(nil)
+        } else {
+            showPet()
         }
     }
 
     @objc private func toggleClickThrough() {
         CatSettings.shared.fullClickThrough.toggle()
+        overlayWindow.catView.updateHoverAndClickThrough()
     }
 
     @objc private func toggleFullScreenOverlay() {
         CatSettings.shared.fullScreenOverlay.toggle()
         overlayWindow.applyWindowLevelAndBehavior()
+        if isPetVisible { overlayWindow.orderFrontRegardless() }
     }
 
     // MARK: - Launch at Login (macOS LaunchAgent — works reliably for signed & ad-hoc builds)
@@ -309,11 +400,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func toggleAutoStart() {
-        _ = setAutoStartEnabled(!isAutoStartEnabled())
+        guard setAutoStartEnabled(!isAutoStartEnabled()) else {
+            let alert = NSAlert()
+            alert.messageText = "未能更新开机启动设置"
+            alert.informativeText = "请检查 ~/Library/LaunchAgents 的访问权限后重试。"
+            alert.runModal()
+            return
+        }
     }
 
     @objc private func toggleKeyBadges() {
         CatSettings.shared.showKeyBadges.toggle()
+        overlayWindow.catView.needsDisplay = true
     }
 
     @objc private func toggleFootEgg() {
@@ -327,6 +425,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func selectScale(_ sender: NSMenuItem) {
         guard let num = sender.representedObject as? NSNumber else { return }
         overlayWindow.applyScale(CGFloat(num.doubleValue))
+        showPet()
     }
 
     @objc private func selectCoatTheme(_ sender: NSMenuItem) {
@@ -339,6 +438,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             CatSettings.shared.eyeTheme = .neonChartreuse
         case .siamese:
             CatSettings.shared.eyeTheme = .siameseBlue
+        case .customTuxedo:
+            CatSettings.shared.eyeTheme = .photoOlive
         case .shorthair, .orangeWhite:
             CatSettings.shared.eyeTheme = .softAmber
         }
@@ -358,9 +459,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func resetPosition() {
         overlayWindow.resetPosition()
+        showPet()
+    }
+
+    @objc private func playCustomPose(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let action = CustomCatAction(rawValue: raw) else { return }
+        showPet()
+        overlayWindow.catView.physics.playCustomAction(action, manual: true)
+    }
+
+    @objc private func toggleCustomAutoActions() {
+        CatSettings.shared.customAutoActions.toggle()
+        if !CatSettings.shared.customAutoActions { overlayWindow.catView.physics.cancelCustomAction() }
+    }
+
+    @objc private func resetCustomPose() {
+        showPet()
+        overlayWindow.catView.physics.cancelCustomAction()
     }
 
     @objc private func runDemoBurst() {
+        showPet()
         let keys: [PhysicalKey] = [.w, .a, .s, .d, .f, .j, .o, .e, .space, .leftShift]
         for (idx, k) in keys.enumerated() {
             DispatchQueue.main.asyncAfter(deadline: .now() + Double(idx) * 0.13) { [weak self] in
@@ -373,9 +493,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let bundleURL = Bundle.main.bundleURL
         let config = NSWorkspace.OpenConfiguration()
         config.createsNewApplicationInstance = true
-        NSWorkspace.shared.openApplication(at: bundleURL, configuration: config) { _, _ in
+        NSWorkspace.shared.openApplication(at: bundleURL, configuration: config) { _, error in
             DispatchQueue.main.async {
-                NSApp.terminate(nil)
+                if let error {
+                    let alert = NSAlert()
+                    alert.messageText = "重启未成功"
+                    alert.informativeText = error.localizedDescription
+                    alert.runModal()
+                } else {
+                    NSApp.terminate(nil)
+                }
             }
         }
     }

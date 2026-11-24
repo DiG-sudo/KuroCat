@@ -4,7 +4,7 @@ import CoreGraphics
 /// Canonical physical key identifier shared across IOHIDManager (raw USB HID)
 /// and CGEventTap (virtual key codes), ensuring full-state NKRO tracking in both
 /// normal typing (any IME) and games.
-enum PhysicalKey: String, Hashable, CaseIterable {
+enum PhysicalKey: Hashable, CaseIterable {
     // Row 0: Number row
     case escape, k1, k2, k3, k4, k5, k6, k7, k8, k9, k0, minus, equal, backspace
     // Row 1: QWERTY
@@ -18,6 +18,18 @@ enum PhysicalKey: String, Hashable, CaseIterable {
     // Extra function / nav keys (mapped cleanly onto top/edge key positions)
     case grave, rightControl, forwardDelete
     case f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12
+
+    case home, end, pageUp, pageDown, insert, printScreen, scrollLock, pause, application, power
+    case numLock, numDivide, numMultiply, numMinus, numPlus, numEnter, numDecimal, numEqual
+    case num0, num1, num2, num3, num4, num5, num6, num7, num8, num9
+    case f13, f14, f15, f16, f17, f18, f19, f20, f21, f22, f23, f24
+    case volumeUp, volumeDown, mute, brightnessUp, brightnessDown, playPause, nextTrack, previousTrack, eject
+    case illuminationUp, illuminationDown, illuminationToggle
+    case internationalBackslash, yen, underscore, jisKeypadComma, eisu, kana
+    // Unknown keys keep their own identity, so simultaneous extra keys are never collapsed.
+    case hidUsage(UInt32), virtualKey(UInt16), consumerUsage(UInt32)
+
+    static let allCases: [PhysicalKey] = [.escape, .k1, .k2, .k3, .k4, .k5, .k6, .k7, .k8, .k9, .k0, .minus, .equal, .backspace, .tab, .q, .w, .e, .r, .t, .y, .u, .i, .o, .p, .leftBracket, .rightBracket, .backslash, .capsLock, .a, .s, .d, .f, .g, .h, .j, .k, .l, .semicolon, .quote, .enter, .leftShift, .z, .x, .c, .v, .b, .n, .m, .comma, .period, .slash, .rightShift, .arrowUp, .leftControl, .leftOption, .leftCommand, .space, .rightCommand, .rightOption, .fn, .arrowLeft, .arrowDown, .arrowRight, .grave, .rightControl, .forwardDelete, .f1, .f2, .f3, .f4, .f5, .f6, .f7, .f8, .f9, .f10, .f11, .f12, .home, .end, .pageUp, .pageDown, .insert, .printScreen, .scrollLock, .pause, .application, .power, .numLock, .numDivide, .numMultiply, .numMinus, .numPlus, .numEnter, .numDecimal, .numEqual, .num0, .num1, .num2, .num3, .num4, .num5, .num6, .num7, .num8, .num9, .f13, .f14, .f15, .f16, .f17, .f18, .f19, .f20, .f21, .f22, .f23, .f24, .volumeUp, .volumeDown, .mute, .brightnessUp, .brightnessDown, .playPause, .nextTrack, .previousTrack, .eject, .illuminationUp, .illuminationDown, .illuminationToggle, .internationalBackslash, .yen, .underscore, .jisKeypadComma, .eisu, .kana]
 
     /// Short, clean keycap badge label matching mechanical keycap aesthetics.
     var badgeLabel: String {
@@ -97,6 +109,67 @@ enum PhysicalKey: String, Hashable, CaseIterable {
         case .f10: return "F10"
         case .f11: return "F11"
         case .f12: return "F12"
+        case .home: return "Home"
+        case .end: return "End"
+        case .pageUp: return "PgUp"
+        case .pageDown: return "PgDn"
+        case .insert: return "Ins"
+        case .printScreen: return "PrtSc"
+        case .scrollLock: return "ScrLk"
+        case .pause: return "Pause"
+        case .application: return "Menu"
+        case .power: return "Power"
+        case .numLock: return "NumLk"
+        case .numDivide: return "Num /"
+        case .numMultiply: return "Num *"
+        case .numMinus: return "Num −"
+        case .numPlus: return "Num +"
+        case .numEnter: return "Num ↵"
+        case .numDecimal: return "Num ."
+        case .numEqual: return "Num ="
+        case .volumeUp: return "音量＋"
+        case .volumeDown: return "音量−"
+        case .mute: return "静音"
+        case .brightnessUp: return "亮度＋"
+        case .brightnessDown: return "亮度−"
+        case .playPause: return "播放"
+        case .nextTrack: return "下一首"
+        case .previousTrack: return "上一首"
+        case .eject: return "退出盘"
+        case .illuminationUp: return "键灯＋"
+        case .illuminationDown: return "键灯−"
+        case .illuminationToggle: return "键灯"
+        case .internationalBackslash: return "ISO \\"
+        case .yen: return "¥"
+        case .underscore: return "_"
+        case .jisKeypadComma: return "Num ,"
+        case .eisu: return "英数"
+        case .kana: return "かな"
+        case .num0: return "Num 0"
+        case .num1: return "Num 1"
+        case .num2: return "Num 2"
+        case .num3: return "Num 3"
+        case .num4: return "Num 4"
+        case .num5: return "Num 5"
+        case .num6: return "Num 6"
+        case .num7: return "Num 7"
+        case .num8: return "Num 8"
+        case .num9: return "Num 9"
+        case .f13: return "F13"
+        case .f14: return "F14"
+        case .f15: return "F15"
+        case .f16: return "F16"
+        case .f17: return "F17"
+        case .f18: return "F18"
+        case .f19: return "F19"
+        case .f20: return "F20"
+        case .f21: return "F21"
+        case .f22: return "F22"
+        case .f23: return "F23"
+        case .f24: return "F24"
+        case .hidUsage(let u): return String(format:"HID %02X",u)
+        case .virtualKey(let c): return "Key \(c)"
+        case .consumerUsage(let u): return String(format:"Media %02X",u)
         }
     }
 
@@ -104,6 +177,39 @@ enum PhysicalKey: String, Hashable, CaseIterable {
     var visualKey: PhysicalKey {
         switch self {
         case .grave: return .escape
+        case .home, .pageUp: return .arrowUp
+        case .end, .pageDown: return .arrowDown
+        case .insert, .application: return .fn
+        case .numEnter: return .enter
+        case .numDecimal, .jisKeypadComma: return .period
+        case .numPlus, .numEqual: return .equal
+        case .numMinus: return .minus
+        case .numMultiply: return .k8
+        case .numDivide: return .slash
+        case .numLock: return .fn
+        case .num0: return .k0
+        case .num1: return .k1
+        case .num2: return .k2
+        case .num3: return .k3
+        case .num4: return .k4
+        case .num5: return .k5
+        case .num6: return .k6
+        case .num7: return .k7
+        case .num8: return .k8
+        case .num9: return .k9
+        case .f13: return .f1.visualKey
+        case .f14: return .f2.visualKey
+        case .f15: return .f3.visualKey
+        case .f16: return .f4.visualKey
+        case .f17: return .f5.visualKey
+        case .f18: return .f6.visualKey
+        case .f19: return .f7.visualKey
+        case .f20: return .f8.visualKey
+        case .f21: return .f9.visualKey
+        case .f22: return .f10.visualKey
+        case .f23: return .f11.visualKey
+        case .f24: return .f12.visualKey
+
         case .forwardDelete: return .backspace
         case .rightControl: return .fn
         case .f1: return .k1
@@ -142,6 +248,10 @@ enum PhysicalKey: String, Hashable, CaseIterable {
 
     /// Map USB HID Keyboard/Keypad Usage ID (Page 0x07) -> PhysicalKey
     static func fromHIDUsage(_ usage: UInt32) -> PhysicalKey? {
+        // 0xFFFFFFFF is an array-index sentinel, never a keyboard usage.
+        // Some devices keep the array flag on valid derived key elements, so
+        // validate the usage range rather than rejecting every array element.
+        guard usage>=0x04 && usage<=0xE7 else { return nil }
         switch usage {
         case 0x04: return .a
         case 0x05: return .b
@@ -214,18 +324,55 @@ enum PhysicalKey: String, Hashable, CaseIterable {
         case 0x51: return .arrowDown
         case 0x52: return .arrowUp
         // Numpad support (great for gaming & data entry)
-        case 0x58: return .enter
-        case 0x59: return .k1
-        case 0x5A: return .k2
-        case 0x5B: return .k3
-        case 0x5C: return .k4
-        case 0x5D: return .k5
-        case 0x5E: return .k6
-        case 0x5F: return .k7
-        case 0x60: return .k8
-        case 0x61: return .k9
-        case 0x62: return .k0
-        case 0x63: return .period
+        case 0x58: return .numEnter
+        case 0x59: return .num1
+        case 0x5A: return .num2
+        case 0x5B: return .num3
+        case 0x5C: return .num4
+        case 0x5D: return .num5
+        case 0x5E: return .num6
+        case 0x5F: return .num7
+        case 0x60: return .num8
+        case 0x61: return .num9
+        case 0x62: return .num0
+        case 0x63: return .numDecimal
+        case 0x32: return .internationalBackslash
+        case 0x46: return .printScreen
+        case 0x47: return .scrollLock
+        case 0x48: return .pause
+        case 0x49: return .insert
+        case 0x4A: return .home
+        case 0x4B: return .pageUp
+        case 0x4D: return .end
+        case 0x4E: return .pageDown
+        case 0x53: return .numLock
+        case 0x54: return .numDivide
+        case 0x55: return .numMultiply
+        case 0x56: return .numMinus
+        case 0x57: return .numPlus
+        case 0x65: return .application
+        case 0x66: return .power
+        case 0x67: return .numEqual
+        case 0x68: return .f13
+        case 0x69: return .f14
+        case 0x6A: return .f15
+        case 0x6B: return .f16
+        case 0x6C: return .f17
+        case 0x6D: return .f18
+        case 0x6E: return .f19
+        case 0x6F: return .f20
+        case 0x70: return .f21
+        case 0x71: return .f22
+        case 0x72: return .f23
+        case 0x73: return .f24
+        case 0x7F: return .mute
+        case 0x80: return .volumeUp
+        case 0x81: return .volumeDown
+        case 0x85: return .jisKeypadComma
+        case 0x87: return .underscore
+        case 0x89: return .yen
+        case 0x90: return .kana
+        case 0x91: return .eisu
         // Modifiers
         case 0xE0: return .leftControl
         case 0xE1: return .leftShift
@@ -235,7 +382,7 @@ enum PhysicalKey: String, Hashable, CaseIterable {
         case 0xE5: return .rightShift
         case 0xE6: return .rightOption
         case 0xE7: return .rightCommand
-        default: return nil
+        default: return .hidUsage(usage)
         }
     }
 
@@ -304,17 +451,17 @@ enum PhysicalKey: String, Hashable, CaseIterable {
         case 61: return .rightOption
         case 62: return .rightControl
         case 63: return .fn
-        case 76: return .enter
-        case 82: return .k0
-        case 83: return .k1
-        case 84: return .k2
-        case 85: return .k3
-        case 86: return .k4
-        case 87: return .k5
-        case 88: return .k6
-        case 89: return .k7
-        case 91: return .k8
-        case 92: return .k9
+        case 76: return .numEnter
+        case 82: return .num0
+        case 83: return .num1
+        case 84: return .num2
+        case 85: return .num3
+        case 86: return .num4
+        case 87: return .num5
+        case 88: return .num6
+        case 89: return .num7
+        case 91: return .num8
+        case 92: return .num9
         case 96: return .f5
         case 97: return .f6
         case 98: return .f7
@@ -328,13 +475,61 @@ enum PhysicalKey: String, Hashable, CaseIterable {
         case 118: return .f4
         case 120: return .f2
         case 122: return .f1
+        case 10: return .internationalBackslash
+        case 64: return .f17
+        case 65: return .numDecimal
+        case 67: return .numMultiply
+        case 69: return .numPlus
+        case 71: return .numLock
+        case 72: return .volumeUp
+        case 73: return .volumeDown
+        case 74: return .mute
+        case 75: return .numDivide
+        case 78: return .numMinus
+        case 79: return .f18
+        case 80: return .f19
+        case 81: return .numEqual
+        case 90: return .f20
+        case 93: return .yen
+        case 94: return .underscore
+        case 95: return .jisKeypadComma
+        case 102: return .eisu
+        case 104: return .kana
+        case 105: return .f13
+        case 106: return .f16
+        case 107: return .f14
+        case 113: return .f15
+        case 114: return .insert
+        case 115: return .home
+        case 116: return .pageUp
+        case 119: return .end
+        case 121: return .pageDown
         case 123: return .arrowLeft
         case 124: return .arrowRight
         case 125: return .arrowDown
         case 126: return .arrowUp
-        default: return nil
+        default: return .virtualKey(code)
         }
     }
+    static func fromConsumerUsage(_ usage: UInt32) -> PhysicalKey {
+        switch usage {
+        case 0xE9: return .volumeUp
+        case 0xEA: return .volumeDown
+        case 0xE2: return .mute
+        case 0x6F: return .brightnessUp
+        case 0x70: return .brightnessDown
+        case 0xCD: return .playPause
+        case 0xB5: return .nextTrack
+        case 0xB6: return .previousTrack
+        case 0xB8: return .eject
+        default: return .consumerUsage(usage)
+        }
+    }
+    static func fromSystemKey(_ code: Int) -> PhysicalKey? {
+        let keys: [Int:PhysicalKey] = [0:.volumeUp,1:.volumeDown,2:.brightnessUp,3:.brightnessDown,7:.mute,10:.numLock,14:.eject,16:.playPause,17:.nextTrack,18:.previousTrack,19:.nextTrack,20:.previousTrack,21:.illuminationUp,22:.illuminationDown,23:.illuminationToggle]
+        return keys[code]
+    }
+
 }
 
 /// Visual definition of a single keycap on the mini 65% mechanical keyboard.

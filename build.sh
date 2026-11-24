@@ -85,6 +85,8 @@ shutil.rmtree(iconset)
 PYEOF
 fi
 
+cp -R "$ROOT/Resources/CustomCat" "$RES_DIR/"
+
 SWIFT_SOURCES=(
     "$ROOT/Sources/KeyMap.swift"
     "$ROOT/Sources/InputEngine.swift"

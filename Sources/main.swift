@@ -1,6 +1,22 @@
 import Foundation
 import AppKit
 
+// Read-only probe of this invocation. macOS may attribute terminal-launched probes
+// to the caller; the running desktop app's menu/pill is authoritative for GUI access.
+if CommandLine.arguments.contains("--input-status") {
+    _ = NSApplication.shared
+    let engine=InputEngine.shared
+    engine.start()
+    let result:[String:Any] = ["inputMonitoring":engine.hasInputMonitoringPermission,
+                             "accessibility":engine.hasAccessibilityPermission,
+                             "hidActive":engine.isHIDActive,"eventTapActive":engine.isTapActive,
+                             "status":engine.status.rawValue,"deskScenes":DeskCatArtwork.images.count]
+    engine.stop()
+    let data=try! JSONSerialization.data(withJSONObject:result,options:[.prettyPrinted,.sortedKeys])
+    print(String(data:data,encoding:.utf8)!)
+    exit(0)
+}
+
 // Support headless multi-pose preview rendering for visual verification
 if let idx = CommandLine.arguments.firstIndex(of: "--render-preview"),
    idx + 1 < CommandLine.arguments.count {

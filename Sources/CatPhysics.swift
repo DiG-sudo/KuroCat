@@ -15,6 +15,7 @@ enum CatCoatTheme: String, CaseIterable {
     case siamese = "挖煤暹罗猫"
     case shorthair = "美短（银虎斑加白）"
     case orangeWhite = "橘白猫"
+    case customTuxedo = "专属黑白猫 · 白围脖"
 }
 
 enum EyeColorTheme: String, CaseIterable {
@@ -24,6 +25,7 @@ enum EyeColorTheme: String, CaseIterable {
     case iceCyan = "冰晶浅蓝"
     case softAmber = "柔和琥珀"
     case referenceHazel = "淡金青绿"
+    case photoOlive = "本猫黄绿瞳"
 
     static func saved(_ raw: String) -> Self {
         raw == "淡金青绿（参考图）" ? .referenceHazel : (Self(rawValue: raw) ?? .neonChartreuse)
@@ -31,6 +33,7 @@ enum EyeColorTheme: String, CaseIterable {
 
     var primaryColor: NSColor {
         switch self {
+        case .photoOlive: return NSColor(calibratedRed: 0.74, green: 0.75, blue: 0.38, alpha: 1)
         case .neonChartreuse: return NSColor(calibratedRed: 0.79, green: 0.95, blue: 0.25, alpha: 1.0) // #C9F240
         case .siameseBlue:    return NSColor(calibratedRed: 0.37, green: 0.78, blue: 0.98, alpha: 1.0) // #5EC7FA
         case .warmAmber:      return NSColor(calibratedRed: 0.98, green: 0.76, blue: 0.22, alpha: 1.0)
@@ -42,6 +45,7 @@ enum EyeColorTheme: String, CaseIterable {
 
     var glowColor: NSColor {
         switch self {
+        case .photoOlive: return NSColor(calibratedRed: 0.74, green: 0.75, blue: 0.38, alpha: 0.85)
         case .neonChartreuse: return NSColor(calibratedRed: 0.77, green: 0.95, blue: 0.24, alpha: 0.85)
         case .siameseBlue:    return NSColor(calibratedRed: 0.38, green: 0.80, blue: 0.99, alpha: 0.85)
         case .warmAmber:      return NSColor(calibratedRed: 0.98, green: 0.74, blue: 0.20, alpha: 0.85)
@@ -54,6 +58,10 @@ enum EyeColorTheme: String, CaseIterable {
 
 final class CatSettings {
     static let shared = CatSettings()
+
+    var customAutoActions: Bool {
+        didSet { UserDefaults.standard.set(customAutoActions, forKey: "KuroCat.CustomAutoActions") }
+    }
 
     var showKeyBadges: Bool {
         didSet { UserDefaults.standard.set(showKeyBadges, forKey: "KuroCat.ShowKeyBadges") }
@@ -85,18 +93,27 @@ final class CatSettings {
 
     private init() {
         let d = UserDefaults.standard
+        customAutoActions = d.object(forKey: "KuroCat.CustomAutoActions") as? Bool ?? true
         showKeyBadges = d.object(forKey: "KuroCat.ShowKeyBadges") as? Bool ?? true
         footEasterEgg = d.object(forKey: "KuroCat.FootEasterEgg") as? Bool ?? true
         petInteraction = d.object(forKey: "KuroCat.PetInteraction") as? Bool ?? true
         fullClickThrough = d.object(forKey: "KuroCat.FullClickThrough") as? Bool ?? false
         fullScreenOverlay = d.object(forKey: "KuroCat.FullScreenOverlay") as? Bool ?? true
         let savedScale = d.double(forKey: "KuroCat.Scale")
-        scale = savedScale > 0.3 ? CGFloat(savedScale) : 1.0
+        scale = savedScale.isFinite && savedScale > 0 ? CGFloat(min(1.5, max(0.65, savedScale))) : 1.0
         coatTheme = CatCoatTheme(rawValue: d.string(forKey: "KuroCat.CoatTheme") ?? "") ?? .classicBlack
         keyboardTheme = KeyboardTheme(rawValue: d.string(forKey: "KuroCat.KeyboardTheme") ?? "") ?? .classicMilk
         let savedEye = d.string(forKey: "KuroCat.EyeTheme") ?? ""
         eyeTheme = EyeColorTheme.saved(savedEye)
     }
+}
+
+enum CustomCatAction: String, CaseIterable {
+    case nap = "桌垫小睡"
+    case wave = "桌边招呼"
+    case observe = "窗沿发呆"
+    case belly = "露肚抱爪"
+    case groom = "抬腿洗脸"
 }
 
 // MARK: - Spring Primitives
@@ -171,6 +188,7 @@ struct ScriptedFrameInput {
     var lastMouseMoveTime: CFTimeInterval
     var lastMouseClickTime: CFTimeInterval
     var lastKeyActivityTime: CFTimeInterval
+    var trackingScreen: CGRect? = nil
 }
 
 // MARK: - Cat Physics & Procedural Animation State
@@ -206,6 +224,10 @@ final class CatPhysics {
     var pupilScale = Spring1D(1.0)
     var huntIntensity = Spring1D(0)  // 0 = normal slit pupils, 1 = full hunting crouch + big round boba pupils!
     var mouseOffset = Spring2D(.zero)
+    var deskMouse = Spring2D(.zero)
+    var deskPaw = Spring2D(.zero)
+    private var deskTapAge: CGFloat = 1
+    private var deskTapX: CGFloat = 0
     var mousePressLeft = Spring1D(0)
     var mousePressRight = Spring1D(0)
 
@@ -221,6 +243,79 @@ final class CatPhysics {
     private var nextBadgeID = 1
     private var badgeCascadeIndex = 0
     private var lastBadgeTime: CFTimeInterval = 0
+
+    // Independent pose rig for the photo-based skin; existing skins keep their own renderer.
+    private(set) var customAction: CustomCatAction?
+    private(set) var customActionAge: CGFloat = 0
+    private(set) var isManualCustomAction = false
+    var customNap = Spring1D(0)
+    var customBelly = Spring1D(0)
+    var customGroom = Spring1D(0)
+    // One complete illustrated pose is visible at a time. Never dissolve two anatomies together.
+    private(set) var customDisplayedPose = "sit_base"
+    private(set) var customPoseOpacity: CGFloat = 1
+    private var customDuration: CGFloat = 0
+    private var nextCustomIdleTime: CGFloat = 20
+    private var customIdleIndex = 0
+
+    func playCustomAction(_ action: CustomCatAction, duration: CGFloat = 7, manual: Bool = false) {
+        isManualCustomAction = manual
+        customAction = action
+        customActionAge = 0
+        customDuration = duration
+    }
+
+    func cancelCustomAction() {
+        isManualCustomAction = false
+        customAction = nil
+        nextCustomIdleTime = time + 20
+    }
+
+    private func stepCustomPose(dt: CGFloat, idleSeconds: CFTimeInterval,
+                                keys: Set<PhysicalKey>, mouseVelocity: CGVector,
+                                mouseDown: Bool, petting: Bool) {
+        if CatSettings.shared.coatTheme != .customTuxedo {
+            customAction = nil
+            isManualCustomAction = false
+        } else {
+            let input = !keys.isEmpty || mouseDown ||
+                hypot(mouseVelocity.dx, mouseVelocity.dy) > 35 || petting
+            // Selected poses survive pointer motion while leaving the menu.
+            // New key/click presses still cancel immediately via the input hooks.
+            if customAction != nil {
+                customActionAge += dt
+                if (!isManualCustomAction && customActionAge > 0.6 && input) || customActionAge >= customDuration {
+                    cancelCustomAction()
+                }
+            } else if CatSettings.shared.customAutoActions && !input &&
+                        idleSeconds > 18 && time >= nextCustomIdleTime {
+                let actions = CustomCatAction.allCases
+                playCustomAction(actions[customIdleIndex % actions.count])
+                customIdleIndex += 1
+            }
+        }
+        customNap.target = customAction == .nap ? 1 : 0
+        customBelly.target = customAction == .belly ? 1 : 0
+        customGroom.target = customAction == .groom ? 1 : 0
+        customNap.step(dt: dt, stiffness: customNap.target == 0 ? 150 : 38, damping: customNap.target == 0 ? 25 : 13)
+        customBelly.step(dt: dt, stiffness: customBelly.target == 0 ? 150 : 38, damping: customBelly.target == 0 ? 25 : 13)
+        customGroom.step(dt: dt, stiffness: customGroom.target == 0 ? 150 : 38, damping: customGroom.target == 0 ? 25 : 13)
+        let desired: String
+        switch customAction {
+        case .nap: desired = "rest_side"
+        case .belly: desired = "belly_hug"
+        case .groom: desired = "groom_leg"
+        case .wave: desired = "wave"
+        case .observe: desired = "observe"
+        case nil: desired = "sit_base"
+        }
+        if customDisplayedPose != desired {
+            customPoseOpacity = max(0, customPoseOpacity-dt/0.14)
+            if customPoseOpacity <= 0 { customDisplayedPose = desired }
+        } else {
+            customPoseOpacity = min(1, customPoseOpacity+dt/0.14)
+        }
+    }
 
     // Time & blink
     private(set) var time: CGFloat = 0
@@ -268,12 +363,18 @@ final class CatPhysics {
     // MARK: - Input Hooks
 
     func triggerKeyDown(_ key: PhysicalKey, at timestamp: CFTimeInterval? = nil) {
+        cancelCustomAction()
         let now = timestamp ?? CACurrentMediaTime()
         let vk = key.visualKey
         keyGlow[vk] = 1.0
 
         let pt = KeyboardLayout.canvasPoint(for: vk)
         lastTypedPoint = pt
+        if CatSettings.shared.coatTheme == .customTuxedo {
+            deskTapAge = 0
+            let c = KeyboardLayout.lookup[vk]?.normalizedCenter ?? CGPoint(x:0.5,y:0.5)
+            deskTapX = (c.x-0.5)*12
+        }
 
         // Snap memory to the appropriate paw with lively bounce velocity
         let active = InputEngine.shared.activeKeys
@@ -302,11 +403,12 @@ final class CatPhysics {
 
         // Spawn floating keycap badge
         if CatSettings.shared.showKeyBadges {
-            spawnFloatingKeycap(label: key.badgeLabel, near: pt, now: now)
+            spawnFloatingKeycap(label: key.badgeLabel, near: CatSettings.shared.coatTheme == .customTuxedo ? DeskCatArtwork.keyPoint(key) : pt, now: now)
         }
     }
 
     func triggerMouseClick(button: Int, isDown: Bool) {
+        if isDown { cancelCustomAction() }
         sleepiness = 0
         if isDown {
             if button == 0 {
@@ -327,6 +429,7 @@ final class CatPhysics {
     /// Called by the overlay window when cursor strokes across the cat's head or body.
     func registerPetStroke(canvasPoint: CGPoint, delta: CGFloat, isHead: Bool, at timestamp: CFTimeInterval? = nil) {
         guard CatSettings.shared.petInteraction else { return }
+        cancelCustomAction()
         let now = timestamp ?? CACurrentMediaTime()
         lastPetTime = now
         petCursorCanvasPos = canvasPoint
@@ -386,6 +489,10 @@ final class CatPhysics {
     func step(dt rawDt: CGFloat, windowFrameInScreen: CGRect, scripted: ScriptedFrameInput? = nil) {
         let dt = min(rawDt, 1.0 / 25.0)
         time += dt
+        deskTapAge += dt
+        let tap = deskTapAge < 0.26 ? sin(.pi*deskTapAge/0.26) : 0
+        deskPaw.target = CGPoint(x:deskTapX*tap,y:-4.8*tap)
+        deskPaw.step(dt:dt,stiffness:620,damping:30)
 
         let engine = InputEngine.shared
         if scripted == nil {
@@ -445,6 +552,11 @@ final class CatPhysics {
         } else {
             sleepiness = max(0, sleepiness - dt * 5.0)
         }
+
+        stepCustomPose(dt: dt, idleSeconds: lastAnyActivity > 0 ? idleSeconds : CFTimeInterval(time),
+                       keys: activeKeys, mouseVelocity: curMouseVel,
+                       mouseDown: curLeftMouse || curRightMouse,
+                       petting: max(petHeadIntensity, petBodyIntensity) > 0.1)
 
         // 2b. Fast Mouse Movement -> Hunting / Stalking Mode (dilated round boba pupils + low crouch!)
         let mouseSpeed = hypot(curMouseVel.dx, curMouseVel.dy)
@@ -595,23 +707,33 @@ final class CatPhysics {
         // Head smoothly turns in pseudo-3D toward the mouse cursor (or subtly nods down toward keys while typing).
         let typingRecently = !activeKeys.isEmpty || (now - curLastKeyTime < 0.65)
         let mouseMovedRecently = (now - curLastMouseMove < 1.2)
-        let eyeOriginCanvas = CGPoint(x: CatPhysics.seatAnchor.x + bodyShiftX.value, y: 124 + headOffsetY.value)
+        let isDesk = CatSettings.shared.coatTheme == .customTuxedo
+        let eyeOriginCanvas = isDesk ? DeskCatArtwork.eyeOrigin : CGPoint(x: CatPhysics.seatAnchor.x + bodyShiftX.value, y: 124 + headOffsetY.value)
 
         // Compute normalized vector from cat head to real macOS screen cursor
         let scale = max(0.2, windowFrameInScreen.width / CatPhysics.canvasSize.width)
         let headScreenX = windowFrameInScreen.minX + eyeOriginCanvas.x * scale
         let headScreenY = windowFrameInScreen.maxY - eyeOriginCanvas.y * scale
         let cursor = curMouseLoc
-        let curDx = (cursor.x - headScreenX) / 290.0
-        let curDy = -(cursor.y - headScreenY) / 260.0
+        let curDx = (cursor.x - headScreenX) / (isDesk ? 180.0 : 290.0)
+        let curDy = -(cursor.y - headScreenY) / (isDesk ? 170.0 : 260.0)
         let curMag = hypot(curDx, curDy)
         let clampedCur = min(1.0, curMag)
         let cursorNX = curMag > 0.001 ? (curDx / curMag) * clampedCur : 0
         let cursorNY = curMag > 0.001 ? (curDy / curMag) * clampedCur : 0
 
+        let screenFrame = scripted?.trackingScreen ?? (scripted == nil ?
+            (NSScreen.screens.first { $0.frame.contains(cursor) }?.frame ?? windowFrameInScreen) : windowFrameInScreen)
+        let mouseNX=max(-1,min(1,(cursor.x-screenFrame.minX)/max(1,screenFrame.width)*2-1))
+        let mouseNY=max(-1,min(1,1-(cursor.y-screenFrame.minY)/max(1,screenFrame.height)*2))
+        deskMouse.target = CGPoint(x:mouseNX*14,y:mouseNY*7)
+        deskMouse.step(dt:dt,stiffness:140,damping:22)
         let lookTargetX: CGFloat
         let lookTargetY: CGFloat
-        if typingRecently && !mouseMovedRecently, let keyPt = lastTypedPoint {
+        if isDesk {
+            lookTargetX = cursorNX
+            lookTargetY = cursorNY
+        } else if typingRecently && !mouseMovedRecently, let keyPt = lastTypedPoint {
             let kdx = max(-0.85, min(0.85, (keyPt.x - eyeOriginCanvas.x) / 95.0))
             let kdy = max(-0.3, min(0.92, (keyPt.y - eyeOriginCanvas.y) / 125.0))
             lookTargetX = kdx
@@ -646,7 +768,7 @@ final class CatPhysics {
         headTilt.step(dt: dt, stiffness: 130, damping: 16)
 
         // Eyes lead slightly ahead of the 2.5D head turn
-        eyeGaze.target = CGPoint(x: lookTargetX * 0.88, y: lookTargetY * 0.85)
+        eyeGaze.target = CGPoint(x: lookTargetX * (isDesk ? 1 : 0.88), y: lookTargetY * (isDesk ? 1 : 0.85))
         eyeGaze.step(dt: dt, stiffness: 210 + hunt * 80, damping: 21)
 
         // Pupil dilation
