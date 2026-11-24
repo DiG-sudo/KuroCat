@@ -273,6 +273,12 @@ final class CatPhysics {
         nextCustomIdleTime = time + 20
     }
 
+    private func playNextCustomIdleAction() {
+        let actions = CustomCatAction.allCases
+        playCustomAction(actions[customIdleIndex % actions.count])
+        customIdleIndex += 1
+    }
+
     private func stepCustomPose(dt: CGFloat, idleSeconds: CFTimeInterval,
                                 keys: Set<PhysicalKey>, mouseVelocity: CGVector,
                                 mouseDown: Bool, petting: Bool) {
@@ -287,14 +293,19 @@ final class CatPhysics {
             // New key/click presses still cancel immediately via the input hooks.
             if customAction != nil {
                 customActionAge += dt
-                if (!isManualCustomAction && customActionAge > 0.6 && input) || customActionAge >= customDuration {
+                if !isManualCustomAction && customActionAge > 0.6 && input {
                     cancelCustomAction()
+                } else if customActionAge >= customDuration {
+                    if !isManualCustomAction && CatSettings.shared.customAutoActions && !input {
+                        // Stay in the idle sequence: transition directly between complete poses.
+                        playNextCustomIdleAction()
+                    } else {
+                        cancelCustomAction()
+                    }
                 }
             } else if CatSettings.shared.customAutoActions && !input &&
                         idleSeconds > 18 && time >= nextCustomIdleTime {
-                let actions = CustomCatAction.allCases
-                playCustomAction(actions[customIdleIndex % actions.count])
-                customIdleIndex += 1
+                playNextCustomIdleAction()
             }
         }
         customNap.target = customAction == .nap ? 1 : 0

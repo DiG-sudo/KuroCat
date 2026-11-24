@@ -90,6 +90,59 @@ precondition(cat.customDisplayedPose=="sit_base")
 cat.playCustomAction(.wave,manual:true);cat.triggerMouseClick(button:0,isDown:true)
 precondition(cat.customAction==nil)
 print("PASS selected actions start their own clock; keyboard D bubbles and mouse clicks return to the interactive desk")
+// Idle scheduling must keep playing complete poses without a desk/cooldown gap.
+CatSettings.shared.customAutoActions = true
+let idleCat=CatPhysics()
+func idleTick(_ subject:CatPhysics,_ frame:Int,velocity:CGVector = .zero,keys:Set<PhysicalKey> = [],mouseDown:Bool = false) {
+ subject.step(dt:1/60,windowFrameInScreen:window,scripted:ScriptedFrameInput(now:epoch+Double(frame)/60,activeKeys:keys,orderedKeys:Array(keys),mouseScreenPos:CGPoint(x:180,y:180),mouseVelocity:velocity,leftMouseDown:mouseDown,rightMouseDown:false,lastMouseMoveTime:epoch,lastMouseClickTime:0,lastKeyActivityTime:epoch))
+}
+for n in 0..<1140 {idleTick(idleCat,n)}
+precondition(idleCat.customAction==nil,"Idle sequence bypassed the initial idle delay")
+var sequence:[CustomCatAction]=[]
+var sequenceStarted=false
+for n in 1140..<(1140+110*60) {
+ idleTick(idleCat,n)
+ if let action=idleCat.customAction {
+  sequenceStarted=true
+  if sequence.last != action {sequence.append(action)}
+ } else {
+  precondition(!sequenceStarted,"Idle sequence returned to the default desk or inserted a cooldown")
+ }
+ if sequenceStarted && sequence.count>1 {
+  precondition(idleCat.customDisplayedPose != "sit_base","Idle transition displayed the default desk")
+ }
+}
+precondition(sequence.count>=15,"Idle sequence did not complete three rounds")
+for (i,action) in sequence.enumerated() {
+ precondition(action==CustomCatAction.allCases[i % CustomCatAction.allCases.count],"Idle actions skipped/reordered at \(i)")
+}
+print("PASS three complete automatic idle rounds: all five poses in order, no default desk or cooldown between poses")
+
+// Active input still takes priority, followed by the existing re-entry delay.
+idleCat.triggerKeyDown(.d,at:epoch+130)
+precondition(idleCat.customAction==nil && idleCat.floatingKeycaps.last?.label=="D")
+for n in 7740..<8340 {idleTick(idleCat,n)}
+precondition(idleCat.customAction==nil,"Idle sequence resumed before the interaction cooldown")
+for n in 8340..<9000 {idleTick(idleCat,n)}
+precondition(idleCat.customAction != nil,"Idle sequence failed to resume after interaction")
+idleCat.triggerMouseClick(button:0,isDown:true)
+precondition(idleCat.customAction==nil)
+for (velocity,keys,mouseDown) in [(CGVector(dx:100,dy:0),Set<PhysicalKey>(),false),(.zero,Set([PhysicalKey.d]),false),(.zero,Set<PhysicalKey>(),true)] {
+ let activeCat=CatPhysics()
+ activeCat.playCustomAction(.nap)
+ for n in 0..<60 {idleTick(activeCat,n,velocity:velocity,keys:keys,mouseDown:mouseDown)}
+ precondition(activeCat.customAction==nil,"Active input failed to interrupt automatic idle")
+}
+let manualCat=CatPhysics()
+manualCat.playCustomAction(.wave,duration:0.8,manual:true)
+for n in 0..<70 {idleTick(manualCat,n)}
+precondition(manualCat.customAction==nil,"Manual previews unexpectedly joined automatic idle rotation")
+CatSettings.shared.customAutoActions = false
+let disabledCat=CatPhysics()
+for n in 0..<1800 {idleTick(disabledCat,n)}
+precondition(disabledCat.customAction==nil,"Disabled automatic idle still started a sequence")
+print("PASS keyboard/mouse wake, re-entry delay, manual previews and automatic idle toggle")
+
 for id in DeskCatIdleAnimation.poseIDs {
  let start=CACurrentMediaTime()
  for n in 0..<60 {autoreleasepool {_=DeskCatIdleAnimation.image(id,age:CGFloat(n)/60)}}
